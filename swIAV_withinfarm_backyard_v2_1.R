@@ -4,8 +4,10 @@
 #****CHUNK 1
 library(tidyverse)
 library(data.table)
+library(profvis)
 set.seed(12345)
 
+profvis({
 # Do we add a commercial farm?
 include_commercial_farm = 0
 include_backyard = 1
@@ -57,7 +59,7 @@ d_update_interval = 1 # unit is day
 s_update_interval = 1 # unit is day
 current_day = 0 # days in simulation
 count_month = 0 # months in simulation
-length_simulation_day = 3*12*30 # unit is day
+length_simulation_day = 1*3*30 # unit is day
 
 # Set up demographic
 # smallholder with sow = 3: try to replicate Tiemann et al 2018
@@ -141,10 +143,16 @@ start_date = as.Date('2020-05-01')
 # infection_history: 0 not infected before. 1 infected before. Needs to consider multiple subtype maybe. 
 
 # SETTING UP FARM_data_frame - now onlyconsidering farrow-to-finish but this needs to be updated
+
 #=============SETTING UP BACKYARD FARM================================================================#
 if(include_backyard==1)
 {
-  EMPTY_data_table = data.table(id = integer(), 
+  max_h_size = 6
+  n_backyard = 100
+  # PRE-DEFINE THE NUMBER OF ROWS 
+  N_INITIAL_BACKYARD = ceiling(length_simulation_day/360*litter_size_max*2*n_backyard*max_h_size*2) #// assuming 2 farrow/sow/year
+    
+  EMPTY_data_table = data.table(id = seq(1,N_INITIAL_BACKYARD), 
                                 farm_id = integer(), 
                                 demographic = integer(), 
                                 age = numeric(), 
@@ -156,7 +164,8 @@ if(include_backyard==1)
                                 removal_date = integer(),
                                 #immunity_date = integer(),  # REMOVED AND REPLACED BY PUTTING THIS INFO IN next_s_date
                                 infection_history = integer(),
-                                farrow_times = integer()
+                                farrow_times = integer(),
+                                alive = integer()
                                 
   ) 
   
@@ -164,7 +173,6 @@ if(include_backyard==1)
   
   
   
-  n_backyard = 100
   farm_id = seq_along(1:n_backyard)
   prop_introduce_gilt = 0.2
   introduce_replace_gilt = rbinom(n_backyard,1,prop_introduce_gilt)
@@ -195,7 +203,7 @@ if(include_backyard==1)
   # SOW_data_frame = EMPTY_data_table
   
   
-  ANIMAL_data_frame = EMPTY_data_table
+  ANIMAL_data_frame = copy(EMPTY_data_table)
   
   # FOR EACH FARM INITIALISE, ADD SOWS FIRST
   for(i in 1:n_backyard)
@@ -203,12 +211,24 @@ if(include_backyard==1)
     temp_init = sample(1:6,1)
     
     # UPDATE FARM_data_frame
-    FARM_data_frame[i,]$N_PIGLET = 0
-    FARM_data_frame[i,]$N_WEANED = 0
-    FARM_data_frame[i,]$N_FATTENING = 0                                            
-    FARM_data_frame[i,]$N_GILT = 0 
-    FARM_data_frame[i,]$N_SOW = temp_init 
-    FARM_data_frame[i,]$N_BOAR = 0 
+    FARM_data_frame = FARM_data_frame[i,
+                                      ':='(N_PIGLET=0,
+                                           N_WEANED =0,
+                                           N_FATTENING = 0,
+                                           N_GILT = 0,
+                                           N_SOW = temp_init,
+                                           N_BOAR = 0,
+                                           N_INFECTED = 0,
+                                           N_IMMUNE = 0,
+                                           N_MDA = 0,
+                                           N_TOTAL = temp_init
+                                      )]
+    # FARM_data_frame[i,]$N_PIGLET = 0
+    # FARM_data_frame[i,]$N_WEANED = 0
+    # FARM_data_frame[i,]$N_FATTENING = 0                                            
+    # FARM_data_frame[i,]$N_GILT = 0 
+    # FARM_data_frame[i,]$N_SOW = temp_init 
+    # FARM_data_frame[i,]$N_BOAR = 0 
     
     if(rbinom(1,1,prev_farm)==1)
     {
@@ -226,48 +246,57 @@ if(include_backyard==1)
       temp_s_date = rep(0,temp_init)
       FARM_data_frame[i,]$N_SUSCEPTIBLE = temp_init
     }
-    FARM_data_frame[i,]$N_INFECTED = 0
-    FARM_data_frame[i,]$N_IMMUNE = 0
-    FARM_data_frame[i,]$N_MDA = 0
-    FARM_data_frame[i,]$N_TOTAL = temp_init
+    # FARM_data_frame[i,]$N_INFECTED = 0
+    # FARM_data_frame[i,]$N_IMMUNE = 0
+    # FARM_data_frame[i,]$N_MDA = 0
+    # FARM_data_frame[i,]$N_TOTAL = temp_init
     # THIS CAN BE DIFFERENT IF THE INITIAL CONDITION IS DIFFERENT
     
     init_sow_id= seq_along(1:temp_init) + current_pig_id
     current_pig_id = current_pig_id + temp_init
-    ANIMAL_data_frame = ANIMAL_data_frame %>% add_row(id = init_sow_id, 
+    ANIMAL_data_frame[init_sow_id, ":="(
                                                       farm_id = rep(i,length(init_sow_id)), 
                                                       demographic = rep(d_sow,length(init_sow_id)),
                                                       sex = rep(female,length(init_sow_id)), 
                                                       status = temp_status,
                                                       farrow_times = rep(0,length(init_sow_id)),
-                                                      next_s_date = temp_s_date
-    )                                        
+                                                      next_s_date = temp_s_date,
+                                                      alive = 1
+    )]                                        
     
   }
-  
-  
+  setDT(FARM_data_frame)
+  # setkeyv(FARM_data_frame,c("farm_id"))
   
   # INITIAL CONDITION
   # SOW
   
-  first_farrow = sample(as.numeric(as.Date('2020-08-01') - start_date),NROW(ANIMAL_data_frame),replace=T)
-  ANIMAL_data_frame = ANIMAL_data_frame %>% mutate(farrow_date=coalesce(farrow_date,first_farrow)) 
+  first_farrow = sample(as.numeric(as.Date('2020-08-01') - start_date),current_pig_id,replace=T)
   # if farrow_date >0 meaning that it's pregnant. 0 means it's empty
   init_sow_age_min = 13
   init_sow_age_max = 52 # can apply normal distribution or anything else
-  init_sow_age = sample((init_sow_age_max-init_sow_age_min),NROW(ANIMAL_data_frame),replace=T) + init_sow_age_min
-  ANIMAL_data_frame = ANIMAL_data_frame %>% mutate(age=coalesce(age,init_sow_age)) 
-  ANIMAL_data_frame$next_d_date = 0 # when next_d_date >0 means it's milking (sows) or being milked (piglet)
+  init_sow_age = sample((init_sow_age_max-init_sow_age_min),current_pig_id,replace=T) + init_sow_age_min
   #SOW_data_frame$immunity_date = 0
-  sow_mortality_date = (sample(cull_mo_min:cull_mo_max,NROW(ANIMAL_data_frame),replace=T) - init_sow_age)*30
-  ANIMAL_data_frame$removal_date = sow_mortality_date
+  sow_mortality_date = (sample(cull_mo_min:cull_mo_max,current_pig_id,replace=T) - init_sow_age)*30
+  
+  ANIMAL_data_frame[1:current_pig_id, ":=" (age = init_sow_age,
+                                                farrow_date = first_farrow,
+                                                removal_date = sow_mortality_date,
+                                                next_d_date = 0  # when next_d_date >0 means it's milking (sows) or being milked (piglet)
+                                                )] 
+  
+  # APPEND EMPTY ROWS TO ANIMAL_data_frame
+  
+  setDT(ANIMAL_data_frame)
+  # setkeyv(ANIMAL_data_frame,c("id","farm_id"))
   # # DATA FRAME
   #     PIGLET_data_frame = WEANER_data_frame = FATTEN_data_frame = GILT_data_frame = EMPTY_data_table
   
   
-  # REMOVE_data_frame FOR BACKYARD
-  REMOVE_data_frame = EMPTY_data_table
-  REMOVE_data_frame = mutate(REMOVE_data_frame, r_reason = integer(),current_day= integer())
+  # # REMOVE_data_frame FOR BACKYARD
+  # REMOVE_data_frame = EMPTY_data_table
+  # REMOVE_data_frame[, ":=" (r_reason = NA,
+  #                           current_day= NA)]
 }
 
 
@@ -297,7 +326,8 @@ if(include_commercial_farm==1)
                                    N_IMMUNE_ROOM = integer(),
                                    day_p_start = integer(),# need to think on which level to record persistence farm, unit, room
                                    batch_size = integer(), # do I need this?
-                                   next_d_date = integer() # DEMOGRAPHIC CHANGE OCCURRS AT ROOM LEVEL
+                                   next_d_date = integer(), # DEMOGRAPHIC CHANGE OCCURRS AT ROOM LEVEL
+                                   lambda = numeric() # FORCE OF INFECTION
                                    
   )
   
@@ -518,45 +548,73 @@ if(include_backyard==1)
   if(NROW(ANIMAL_data_frame)>0)
   {
     # SUBTRACT 1 FROM each variable that describes dates
-    ANIMAL_data_frame$next_s_date = ANIMAL_data_frame$next_s_date - 1 # DAY FOR STATUS CHANGE
-    ANIMAL_data_frame$next_d_date = ANIMAL_data_frame$next_d_date - 1 # DAY FOR DEMOGRAPHIC CHANGE
-    ANIMAL_data_frame$farrow_date = ANIMAL_data_frame$farrow_date - 1 # DAY FOR FARROW - DO I NEED THIS IN ADDITION TO next_d_date
-    ANIMAL_data_frame$removal_date = ANIMAL_data_frame$removal_date - 1 # DAY FOR REMOVAL
+    ANIMAL_data_frame[1:current_pig_id,":="(
+      next_s_date = next_s_date - 1,
+      next_d_date = next_d_date -1,
+      farrow_date = farrow_date -1,
+      removal_date = removal_date -1
+    )]
+    # ANIMAL_data_frame$next_s_date = ANIMAL_data_frame$next_s_date - 1 # DAY FOR STATUS CHANGE
+    # ANIMAL_data_frame$next_d_date = ANIMAL_data_frame$next_d_date - 1 # DAY FOR DEMOGRAPHIC CHANGE
+    # ANIMAL_data_frame$farrow_date = ANIMAL_data_frame$farrow_date - 1 # DAY FOR FARROW - DO I NEED THIS IN ADDITION TO next_d_date
+    # ANIMAL_data_frame$removal_date = ANIMAL_data_frame$removal_date - 1 # DAY FOR REMOVAL
   }
   #============GOING THROUGH EACH BACKYARD FOR EVENTS===================================#
   # Calculate the number of new infections beta*S*I, IF S > 0
   if(NROW(FARM_data_frame)>0)
   {
+    FARM_data_frame[,lambda := mapply(update_lambda_backyard, N_INFECTED,N_TOTAL,beta_direct)]
+    TEMP_ANIMAL_data_frame1 = na.omit(ANIMAL_data_frame,cols="farm_id")
+    setindex(TEMP_ANIMAL_data_frame1,farrow_date,removal_date)
+    # CREATE removal_date = 0 data
+    TEMP_REMOVAL_id = TEMP_ANIMAL_data_frame1[removal_date==0,.N,by=farm_id][,farm_id]
+    # setkey(TEMP_REMOVAL,farm_id)
+    # CREATE farrow_date = 0 data
+    TEMP_FARROW_id = TEMP_ANIMAL_data_frame1[farrow_date==0,.N,by=farm_id][,farm_id]
+    # setkey(TEMP_FARROW,farm_id)
+    setkey(TEMP_ANIMAL_data_frame1,farm_id)
+    
+    # LIST UP ONLY FARMS THAT HAVE REMOVAL EVENT THEN REMOVE
+    # NEXT LIST UP FARROW, PREGNANT, DEMOGRAPHIC/STATUS CHANGE EVENT
+    # REALLY NO NEED TO GO THROUGH EACH FARM
+    
     for(nfarm in 1:NROW(FARM_data_frame))
     {
-      if(FARM_data_frame[nfarm,]$N_INFECTED>0)
-      {
-        eval_trans = 1 #IF 1 THEN EVALUATE TRANSMISSION EVENT
-        temp_I = FARM_data_frame[nfarm,]$N_INFECTED
-        temp_lamda = temp_I * beta_direct/ FARM_data_frame[nfarm,]$N_TOTAL
-        temp_S = FARM_data_frame[nfarm,]$N_SUSCEPTIBLE
-      }else
-      {
-        eval_trans = 0
-      }
+      TEMP_ANIMAL_data_frame = TEMP_ANIMAL_data_frame1[farm_id==nfarm]
+     
       
+     
+      # if(FARM_data_frame[nfarm,]$N_INFECTED>0)
+      # {
+      #   eval_trans = 1 #IF 1 THEN EVALUATE TRANSMISSION EVENT
+      #   temp_I = FARM_data_frame[nfarm,]$N_INFECTED
+      #   temp_lamda = temp_I * beta_direct/ FARM_data_frame[nfarm,]$N_TOTAL
+      #   temp_S = FARM_data_frame[nfarm,]$N_SUSCEPTIBLE
+      # }else
+      # {
+      #   eval_trans = 0
+      # }
+      # 
       #=====DISEASE TRANSMISSION COMPONENT=========================
-      if(eval_trans==1)
+      # if(eval_trans==1)
+      if(FARM_data_frame[nfarm,lambda]>0)
       {
-        
-        temp_data = ANIMAL_data_frame %>% filter(farm_id == nfarm) 
-        old_s_vec = temp_data %>% pull(status)
-        old_s_date = temp_data %>% pull(next_s_date)
+        # stop() # ERROR CHECK
+        # temp_data = ANIMAL_data_frame %>% filter(farm_id == nfarm) 
+        # old_s_vec = temp_data %>% pull(status)
+        old_s_vec = TEMP_ANIMAL_data_frame[,status]
+        # old_s_date = temp_data %>% pull(next_s_date)
+        old_s_date = TEMP_ANIMAL_data_frame[,next_s_date]
         # old_s_vec = ANIMAL_data_frame[ANIMAL_data_frame$farm_id==nfarm & ANIMAL_data_frame$demographic==d_piglet,]$status
         # old_s_date = ANIMAL_data_frame[ANIMAL_data_frame$farm_id==nfarm & ANIMAL_data_frame$demographic==d_piglet,]$next_s_date
         
         # DETERMINE THE NUMBER OF NEW INFECTED
-        new_inf_count =  rbinom(1,temp_S,temp_lamda)
+        new_inf_count =  rbinom(1,FARM_data_frame[nfarm,N_SUSCEPTIBLE],FARM_data_frame[nfarm,lambda])
         if(new_inf_count>0)
         {
           # EXTRACT SUSCPETIBLE FROM THIS FARM
           
-          temp_SUS_id = temp_data %>% filter(status==s_S) %>% pull(id)
+          temp_SUS_id = TEMP_ANIMAL_data_frame[status==s_S,id]
           
           if(length(temp_SUS_id)==1) # if only one animal choose this animal
           {
@@ -566,13 +624,20 @@ if(include_backyard==1)
           {
             new_EXPOSED_id = sample(temp_SUS_id,new_inf_count,replace=F)
           }
-          
-          ANIMAL_data_frame[(ANIMAL_data_frame$farm_id == nfarm) & (ANIMAL_data_frame$id %in% new_EXPOSED_id),]$status = s_E
-          ANIMAL_data_frame[(ANIMAL_data_frame$farm_id == nfarm) & (ANIMAL_data_frame$id %in% new_EXPOSED_id),]$next_s_date = day_latent
+          ANIMAL_data_frame[id %in% new_EXPOSED_id,
+                            ":="(status = s_E,
+                                 next_s_date = day_latent
+                            )]
+          # ANIMAL_data_frame[(ANIMAL_data_frame$farm_id == nfarm) & (ANIMAL_data_frame$id %in% new_EXPOSED_id),]$status = s_E
+          # ANIMAL_data_frame[(ANIMAL_data_frame$farm_id == nfarm) & (ANIMAL_data_frame$id %in% new_EXPOSED_id),]$next_s_date = day_latent
           
           # THEN UPDATE FARM_data_frame
-          FARM_data_frame[nfarm,]$N_EXPOSED = FARM_data_frame[nfarm,]$N_EXPOSED + new_inf_count
-          FARM_data_frame[nfarm,]$N_SUSCEPTIBLE = FARM_data_frame[nfarm,]$N_SUSCEPTIBLE - new_inf_count
+          FARM_data_frame[nfarm,
+                                            ":="(N_EXPOSED = N_EXPOSED + new_inf_count,
+                                                 N_SUSCEPTIBLE = N_SUSCEPTIBLE - new_inf_count
+                                            )]
+          # FARM_data_frame[nfarm,]$N_EXPOSED = FARM_data_frame[nfarm,]$N_EXPOSED + new_inf_count
+          # FARM_data_frame[nfarm,]$N_SUSCEPTIBLE = FARM_data_frame[nfarm,]$N_SUSCEPTIBLE - new_inf_count
         }
         
       }
@@ -590,54 +655,72 @@ if(include_backyard==1)
       ###### TO DO
       ###### NEED TO CHECK REASON FOR REMOVAL? HOW?? When put removal_date, add info already?
       #####  CONTINUE OTHER EVENTS
-      temp_data = ANIMAL_data_frame %>% filter(farm_id == nfarm)
-      remove_data = temp_data %>% filter(removal_date==0)
-      if(NROW(remove_data)>0)
+      # temp_data = ANIMAL_data_frame %>% filter(farm_id == nfarm)
+      # remove_data = temp_data %>% filter(removal_date==0)
+      # n_remove_data=  ANIMAL_data_frame %>% filter(farm_id == nfarm & removal_date==0) %>% NROW(.)
+      # setkey(TEMP_ANIMAL_data_frame,removal_date) # slower
+      # n_remove_data=  TEMP_ANIMAL_data_frame[removal_date==0L, .N]
+      # n_remove_data=  TEMP_REMOVAL[farm_id==nfarm, .N]
+      # if(n_remove_data>0)
+      if(nfarm %in% TEMP_REMOVAL_id)
       {
         # CHANGE DEMOGRAPHIC
-        temp_demographic = remove_data %>% count(demographic)
-        FARM_data_frame[nfarm,]$N_TOTAL = FARM_data_frame[nfarm,]$N_TOTAL - NROW(remove_data)
+        # temp_demographic = ANIMAL_data_frame %>% filter(farm_id == nfarm & removal_date==0) %>% count(demographic)
+        # temp_demographic = TEMP_ANIMAL_data_frame[removal_date==0,.N,by=demographic]
+        temp_demographic = TEMP_ANIMAL_data_frame[removal_date==0,.N,by=demographic]
+        n_row = temp_demographic[,sum(N)]
+        # FARM_data_frame[nfarm,]$N_TOTAL = FARM_data_frame[nfarm,]$N_TOTAL - NROW(remove_data)
+        FARM_data_frame[nfarm,N_TOTAL := N_TOTAL - n_row]
         for(n_temp_demographic in 1:NROW(temp_demographic))
         {
-          temp_demo = temp_demographic[n_temp_demographic,] %>% pull(demographic)
-          temp_num = temp_demographic[n_temp_demographic,] %>% pull(n)
+          # temp_demo = temp_demographic[n_temp_demographic,] %>% pull(demographic)
+          # temp_num = temp_demographic[n_temp_demographic,] %>% pull(n)
+          temp_demo = temp_demographic[n_temp_demographic,demographic] 
+          temp_num = temp_demographic[n_temp_demographic,N]
           if(temp_demo==d_piglet)
           {
-            FARM_data_frame[nfarm,]$N_PIGLET = FARM_data_frame[nfarm,]$N_PIGLET - temp_num
+            FARM_data_frame[nfarm,N_PIGLET := N_PIGLET - temp_num]
           }
           else if(temp_demo==d_weaned)
           {
-            FARM_data_frame[nfarm,]$N_WEANED = FARM_data_frame[nfarm,]$N_WEANED - temp_num
+            FARM_data_frame[nfarm,N_WEANED := N_WEANED - temp_num]
+          
           }
           else if(temp_demo==d_fattening)
           {
-            FARM_data_frame[nfarm,]$N_FATTENING = FARM_data_frame[nfarm,]$N_FATTENING - temp_num
+            FARM_data_frame[nfarm,N_FATTENING := N_FATTENING - temp_num]
+            
           }
           else if(temp_demo==d_gilt)
           {
-            FARM_data_frame[nfarm,]$N_GILT = FARM_data_frame[nfarm,]$N_GILT - temp_num
+            FARM_data_frame[nfarm,N_GILT := N_GILT - temp_num]
+            
           }
           else if(temp_demo==d_sow) # @@@ REPLACE BY NEW GILTS
           {
-            FARM_data_frame[nfarm,]$N_SOW = FARM_data_frame[nfarm,]$N_SOW - temp_num
+            FARM_data_frame[nfarm,N_SOW := N_SOW - temp_num]
+            
             # EXTRACT FARM POLICY
-            temp_policy = FARM_data_frame[nfarm,]$introduce_replace_gilt
+            temp_policy = FARM_data_frame[nfarm,introduce_replace_gilt]
             
             if(temp_policy == 0) # IF PRIORITISING OWN ANIMALS
             {
               # OPTION 1: REPLACE BY OWN PIGLET/GILT
-              temp_WEANER = ANIMAL_data_frame[ANIMAL_data_frame$sex == female & ANIMAL_data_frame$farm_id == nfarm & ANIMAL_data_frame$demographic==d_weaned,]
+              # temp_WEANER = ANIMAL_data_frame[ANIMAL_data_frame$farm_id == nfarm & ANIMAL_data_frame$sex == female &  ANIMAL_data_frame$demographic==d_weaned,]
+              temp_WEANER = TEMP_ANIMAL_data_frame[sex == female &  demographic==d_weaned][order(next_d_date,decreasing=T)]
               
               # STEP 1: COMPARE temp_num and NROW(temp_WEANER), if NROW > temp_num, AVAILABLE GILT IS ENOUGH FOR REPLACEMENT
               if(NROW(temp_WEANER)>=temp_num)
               {
-                temp_WEANER = temp_WEANER[order(temp_WEANER$next_d_date),]
-                temp_WEANER_id = temp_WEANER[1:temp_num,]$id 
-                ANIMAL_data_frame[ANIMAL_data_frame$id %in% temp_WEANER_id,]$demographic = d_gilt
+                # temp_WEANER = temp_WEANER[order(temp_WEANER$next_d_date),]
+                temp_WEANER_id = temp_WEANER[1:temp_num,id]
+                ANIMAL_data_frame[id %in% temp_WEANER_id,demographic := d_gilt]
                 # NEED To CHANGE next_d_date
-                ANIMAL_data_frame[ANIMAL_data_frame$id %in% temp_WEANER_id,]$next_d_date =  ANIMAL_data_frame[ANIMAL_data_frame$id %in% temp_WEANER_id,]$next_d_date + grow_to_first_farrow
-                FARM_data_frame[nfarm,]$N_WEANED =  FARM_data_frame[nfarm,]$N_WEANED - temp_num
-                FARM_data_frame[nfarm,]$N_GILT = FARM_data_frame[nfarm,]$N_GILT + temp_num
+                ANIMAL_data_frame[id %in% temp_WEANER_id,next_d_date := next_d_date + grow_to_first_farrow] 
+                FARM_data_frame[nfarm,":="(
+                                          N_WEANED = N_WEANED -temp_num,
+                                          N_GILT = N_GILT + temp_num)]
+               
               }
               # STEP 2: IF temp_num > NROW, TAKE ALL WEANER INTO GILTS. TAKE REMAINING FROM PURCHASE
               else if(NROW(temp_WEANER)<temp_num & NROW(temp_WEANER)>=0)
@@ -645,12 +728,14 @@ if(include_backyard==1)
                 temp_WEANER_id = temp_WEANER$id 
                 if(NROW(temp_WEANER)>0)
                 {
-                  ANIMAL_data_frame[ANIMAL_data_frame$id %in% temp_WEANER_id,]$demographic = d_gilt
-                  ANIMAL_data_frame[ANIMAL_data_frame$id %in% temp_WEANER_id,]$next_d_date =  ANIMAL_data_frame[ANIMAL_data_frame$id %in% temp_WEANER_id,]$next_d_date + grow_to_first_farrow
-                  FARM_data_frame[nfarm,]$N_WEANED =  FARM_data_frame[nfarm,]$N_WEANED - NROW(temp_WEANER)
+                  ANIMAL_data_frame[id %in% temp_WEANER_id,":="(
+                                                                next_d_date = next_d_date + grow_to_first_farrow,
+                                                                demographic = d_gilt)]
+                  
+                  FARM_data_frame[nfarm,N_WEANED := N_WEANED -NROW(temp_WEANER)]
                 }
                 
-                FARM_data_frame[nfarm,]$N_GILT = FARM_data_frame[nfarm,]$N_GILT + temp_num
+                FARM_data_frame[nfarm,N_GILT := N_GILT + temp_num]
                 # REMAINING FROM PURCHASE - introduce temp_num animals
                 temp_num = temp_num - NROW(temp_WEANER)
                 # ADD GILT - WHEN TO ADD? INFECTION STATUS OF GILT (BASED On GLOBAL PREVALENCE FOR NOW)
@@ -660,7 +745,18 @@ if(include_backyard==1)
                 
                 temp_gilt_status = ifelse(temp_gilt_status==1,s_E,s_S) # Because infected is s_I
                 
-                ANIMAL_data_frame =  ANIMAL_data_frame %>% add_row(id = seq_along(1:temp_num)+current_pig_id,
+                # ANIMAL_data_frame =  ANIMAL_data_frame %>% add_row(id = seq_along(1:temp_num)+current_pig_id,
+                #                                                    next_d_date = rep(introduction_to_first_farrow,temp_num),
+                #                                                    farm_id = rep(nfarm,temp_num),
+                #                                                    demographic = rep(d_gilt,temp_num),
+                #                                                    sex = rep(female,temp_num), 
+                #                                                    status = temp_gilt_status,
+                #                                                    next_s_date = temp_s_date,
+                #                                                    farrow_times = rep(0,temp_num),
+                #                                                    removal_date = rep(-1,temp_num) # ASSUMING INTRODUCED GILT DOESN't DIE UNTIL FARROWING
+                # )
+                ANIMAL_data_frame[id %in% (seq_along(1:temp_num)+current_pig_id),
+                                                       ":="(
                                                                    next_d_date = rep(introduction_to_first_farrow,temp_num),
                                                                    farm_id = rep(nfarm,temp_num),
                                                                    demographic = rep(d_gilt,temp_num),
@@ -669,16 +765,22 @@ if(include_backyard==1)
                                                                    next_s_date = temp_s_date,
                                                                    farrow_times = rep(0,temp_num),
                                                                    removal_date = rep(-1,temp_num) # ASSUMING INTRODUCED GILT DOESN't DIE UNTIL FARROWING
-                )
+                )]
+                
                 if(nfarm==x)
                 {
                   gilt_x = c(gilt_x,current_day)
                 }
                 current_pig_id = current_pig_id + temp_num
                 # UPDATE disease counter
-                FARM_data_frame[nfarm,]$N_EXPOSED = FARM_data_frame[nfarm,]$N_EXPOSED + temp_n_infected
-                FARM_data_frame[nfarm,]$N_SUSCEPTIBLE = FARM_data_frame[nfarm,]$N_SUSCEPTIBLE + (temp_num -temp_n_infected)
-                FARM_data_frame[nfarm,]$N_TOTAL = FARM_data_frame[nfarm,]$N_TOTAL + temp_num
+                FARM_data_frame[nfarm,
+                                                  ":="(N_EXPOSED = N_EXPOSED + temp_n_infected,
+                                                       N_SUSCEPTIBLE = N_SUSCEPTIBLE + (temp_num -temp_n_infected),
+                                                       N_TOTAL = N_TOTAL + temp_num
+                                                  )]
+                # FARM_data_frame[nfarm,]$N_EXPOSED = FARM_data_frame[nfarm,]$N_EXPOSED + temp_n_infected
+                # FARM_data_frame[nfarm,]$N_SUSCEPTIBLE = FARM_data_frame[nfarm,]$N_SUSCEPTIBLE + (temp_num -temp_n_infected)
+                # FARM_data_frame[nfarm,]$N_TOTAL = FARM_data_frame[nfarm,]$N_TOTAL + temp_num
               }
             } # OPTION 1 END
             else
@@ -697,7 +799,18 @@ if(include_backyard==1)
               # If between MAY and September, longer time to first farrow
               
               
-              ANIMAL_data_frame =  ANIMAL_data_frame %>% add_row(id = seq_along(1:temp_num)+current_pig_id,
+              # ANIMAL_data_frame =  ANIMAL_data_frame %>% add_row(id = seq_along(1:temp_num)+current_pig_id,
+              #                                                    next_d_date = rep(introduction_to_first_farrow,temp_num),
+              #                                                    farm_id = rep(nfarm,temp_num),
+              #                                                    demographic = rep(d_gilt,temp_num),
+              #                                                    sex = rep(female,temp_num), 
+              #                                                    status = temp_gilt_status,
+              #                                                    next_s_date = temp_s_date,
+              #                                                    farrow_times = rep(0,temp_num),
+              #                                                    removal_date = rep(-1,temp_num) # ASSUMING INTRODUCED GILT DOESN't DIE
+              # )
+              ANIMAL_data_frame[id %in% (seq_along(1:temp_num)+current_pig_id),
+                                ":="(
                                                                  next_d_date = rep(introduction_to_first_farrow,temp_num),
                                                                  farm_id = rep(nfarm,temp_num),
                                                                  demographic = rep(d_gilt,temp_num),
@@ -706,14 +819,21 @@ if(include_backyard==1)
                                                                  next_s_date = temp_s_date,
                                                                  farrow_times = rep(0,temp_num),
                                                                  removal_date = rep(-1,temp_num) # ASSUMING INTRODUCED GILT DOESN't DIE
-              )
+              )]
               
               current_pig_id = current_pig_id + temp_num
               # UPDATE disease counter
-              FARM_data_frame[nfarm,]$N_EXPOSED = FARM_data_frame[nfarm,]$N_EXPOSED + temp_n_infected
-              FARM_data_frame[nfarm,]$N_SUSCEPTIBLE = FARM_data_frame[nfarm,]$N_SUSCEPTIBLE + (temp_num -temp_n_infected)
-              FARM_data_frame[nfarm,]$N_TOTAL = FARM_data_frame[nfarm,]$N_TOTAL + temp_num
-              FARM_data_frame[nfarm,]$N_GILT = FARM_data_frame[nfarm,]$N_GILT + temp_num
+              FARM_data_frame[nfarm,
+                                                ":="(N_EXPOSED = N_EXPOSED + temp_n_infected,
+                                                     N_SUSCEPTIBLE = N_SUSCEPTIBLE + (temp_num -temp_n_infected),
+                                                     N_TOTAL = N_TOTAL + temp_num,
+                                                     N_GILT = N_GILT + temp_num
+                                                  
+                                                )]
+              # FARM_data_frame[nfarm,]$N_EXPOSED = FARM_data_frame[nfarm,]$N_EXPOSED + temp_n_infected
+              # FARM_data_frame[nfarm,]$N_SUSCEPTIBLE = FARM_data_frame[nfarm,]$N_SUSCEPTIBLE + (temp_num -temp_n_infected)
+              # FARM_data_frame[nfarm,]$N_TOTAL = FARM_data_frame[nfarm,]$N_TOTAL + temp_num
+              # FARM_data_frame[nfarm,]$N_GILT = FARM_data_frame[nfarm,]$N_GILT + temp_num
             }
           }
           else if(temp_demo==d_boar)
@@ -722,47 +842,53 @@ if(include_backyard==1)
           }
         }
         # CHANGE DISEASE STATUS
-        temp_status = remove_data %>% count(status)
+        temp_status = TEMP_ANIMAL_data_frame[removal_date==0, .N, by=status] 
+          
         
         for(n_status in 1:NROW(temp_status))
         {
-          temp_demo = temp_status[n_status,] %>% pull(status)
-          temp_num = temp_status[n_status,] %>% pull(n)
+          temp_demo = temp_status[n_status,status] 
+          temp_num = temp_status[n_status,N] 
           if(temp_demo==s_S)
           {
-            FARM_data_frame[nfarm,]$N_SUSCEPTIBLE = FARM_data_frame[nfarm,]$N_SUSCEPTIBLE - temp_num
+            FARM_data_frame[nfarm,N_SUSCEPTIBLE := N_SUSCEPTIBLE -temp_num]
           }
           else if(temp_demo==s_E)
           {
-            FARM_data_frame[nfarm,]$N_EXPOSED = FARM_data_frame[nfarm,]$N_EXPOSED - temp_num
+            FARM_data_frame[nfarm,N_EXPOSED := N_EXPOSED -temp_num]
+            
           }
           else if(temp_demo==s_I)
           {
-            FARM_data_frame[nfarm,]$N_INFECTED = FARM_data_frame[nfarm,]$N_INFECTED - temp_num
+            FARM_data_frame[nfarm,N_INFECTED := N_INFECTED -temp_num]
+            
             # RECORD DURATION OF PERSISTENCE
-            if(FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_INFECTED==0)
+            if(FARM_data_frame[nfarm,N_INFECTED]==0)
             {
               
-              diff = current_day - FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$day_p_start
+              diff = current_day - FARM_data_frame[nfarm,day_p_start]
               persistence_vector = c(persistence_vector,diff)
               persistence_farm_id = c(persistence_farm_id,nfarm)
             }
           }
-          else if(temp_demo==s_R)
+          else if(temp_demo==s_R|temp_demo==s_mda)
           {
-            FARM_data_frame[nfarm,]$N_IMMUNE = FARM_data_frame[nfarm,]$N_IMMUNE - temp_num
+            FARM_data_frame[nfarm,N_IMMUNE := N_IMMUNE -temp_num]
+           
           }
-          else if(temp_demo==s_mda)
-          {
-            FARM_data_frame[nfarm,]$N_IMMUNE = FARM_data_frame[nfarm,]$N_IMMUNE - temp_num
-          }
+          
           
         }
         
         # REMOVE ANIMALS FROM DATA
-        ANIMAL_data_frame = ANIMAL_data_frame[(ANIMAL_data_frame$farm_id != nfarm) | (ANIMAL_data_frame$farm_id == nfarm & ANIMAL_data_frame$removal_date!=0),]
-        remove_data = remove_data %>% mutate(current_day = current_day)
-        REMOVE_data_frame = REMOVE_data_frame %>% add_row(remove_data)
+        # remove_data = ANIMAL_data_frame[farm_id == nfarm & removal_date==0][,current_day := current_day]
+        # ANIMAL_data_frame = ANIMAL_data_frame[(farm_id != nfarm) | (farm_id == nfarm & removal_date!=0),]
+        
+        # REMOVE_data_frame = REMOVE_data_frame %>% add_row(remove_data)
+        ANIMAL_data_frame[farm_id == nfarm & removal_date==0, ":="(
+          farm_id = NA,
+          alive = 0
+        )]
       }
       
       
@@ -776,21 +902,24 @@ if(include_backyard==1)
       
       
       #====FARROWING EVENT========================================
-      temp_data = ANIMAL_data_frame %>% filter(farm_id == nfarm)
-      temp_farrowing_data = temp_data %>% filter(farrow_date==0)
-      if(NROW(temp_farrowing_data)>0)
+      # temp_data = ANIMAL_data_frame %>% filter(farm_id == nfarm)
+      # temp_farrowing_data = temp_data %>% filter(farrow_date==0)
+      # setkey(TEMP_ANIMAL_data_frame,farrow_date)
+      
+      if(nfarm %in% TEMP_FARROW_id)
       {
         if(nfarm==x)
         {
           farrow_x = c(farrow_x,current_day)
         }
+        temp_farrowing_data = TEMP_ANIMAL_data_frame[farrow_date==0L]
         for(animal in 1:NROW(temp_farrowing_data))
         {
-          this_animal = temp_farrowing_data[animal,]
-          temp_id = this_animal$id
-          temp_status = this_animal$status
+          # this_animal = temp_farrowing_data[animal,] 
+          temp_id = temp_farrowing_data[animal,id]
+          temp_status = temp_farrowing_data[animal,status]
           # UPDATE SOW DATA
-          ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$farrow_times = ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$farrow_times + 1
+          # ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$farrow_times = ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$farrow_times + 1
           
           # DETERMINE HOW MANY PIGLETS
           n_piglet = sample(litter_size_min:litter_size_max,1)
@@ -802,8 +931,10 @@ if(include_backyard==1)
           
           # DETERMINE next_d_date
           piglet_next_d_date = sample(wean_day_min:wean_day_max,1,replace=F)
-          ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$next_d_date = piglet_next_d_date # WEANING DATE
-          
+          # ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$next_d_date = piglet_next_d_date # WEANING DATE
+          ANIMAL_data_frame[id==temp_id,":="(
+                            farrow_times = farrow_times+1,
+                            next_d_date = piglet_next_d_date)]
           # DETERMINE IF MDA IS PASSED DEPENDING ON THE STATUS OF SOW
           if(temp_status==s_R)
           {
@@ -812,21 +943,45 @@ if(include_backyard==1)
             # piglet_immunity_date = round(-1*log(sample(1:100,n_piglet,replace=T)/100)/(1/day_mda_loss))
             piglet_immunity_date = round(rgamma(n_piglet,shape=shape_gamma_mda,scale=scale_gamma)) #sample from gamma
             # UPDATE FARM TABLE
-            FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_PIGLET = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_PIGLET + n_piglet
-            FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_IMMUNE = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_IMMUNE + n_piglet
-            FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_TOTAL = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_TOTAL + n_piglet
+            FARM_data_frame[nfarm,
+                                              ":="(N_PIGLET = N_PIGLET + n_piglet,
+                                                   N_IMMUNE = N_IMMUNE + n_piglet,
+                                                   N_TOTAL = N_TOTAL + n_piglet
+                                                
+                                              )]
+            # FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_PIGLET = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_PIGLET + n_piglet
+            # FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_IMMUNE = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_IMMUNE + n_piglet
+            # FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_TOTAL = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_TOTAL + n_piglet
           }
           else # dam not immunity
           {
             piglet_status = s_S
-            piglet_immunity_date = rep(0,n_piglet)
+            piglet_immunity_date = rep(-1,n_piglet)
             # UPDATE FARM TABLE
-            FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_PIGLET = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_PIGLET + n_piglet
-            FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_SUSCEPTIBLE = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_SUSCEPTIBLE + n_piglet
-            FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_TOTAL = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_TOTAL + n_piglet
+            FARM_data_frame[nfarm,
+                                              ":="(N_PIGLET = N_PIGLET + n_piglet,
+                                                   N_SUSCEPTIBLE = N_SUSCEPTIBLE + n_piglet,
+                                                   N_TOTAL = N_TOTAL + n_piglet
+                                                   
+                                              )]
+            # FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_PIGLET = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_PIGLET + n_piglet
+            # FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_SUSCEPTIBLE = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_SUSCEPTIBLE + n_piglet
+            # FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_TOTAL = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_TOTAL + n_piglet
           }
           # ADD NEW BORN TO PIGLET DATAFRAME
-          ANIMAL_data_frame = ANIMAL_data_frame %>% add_row(id = seq_along(1:n_piglet)+current_pig_id,
+          # ONE OPTION IS JUST TO HAVE DATA ALREADY AND REPLACE VALUES BY THESE NEW ONES
+          # ANIMAL_data_frame = ANIMAL_data_frame %>% add_row(id = seq_along(1:n_piglet)+current_pig_id,
+          #                                                   farm_id = rep(nfarm,n_piglet), 
+          #                                                   demographic = rep(d_piglet,n_piglet), 
+          #                                                   status = rep(piglet_status,n_piglet),
+          #                                                   age = rep(0,n_piglet), 
+          #                                                   sex = sample(0:1,n_piglet,replace=T),
+          #                                                   next_d_date = rep(piglet_next_d_date,n_piglet),
+          #                                                   next_s_date = piglet_immunity_date,
+          #                                                   removal_date = day_piglet_mortality
+          # )
+          ANIMAL_data_frame[id %in% (seq_along(1:n_piglet)+current_pig_id),
+                            ":="(
                                                             farm_id = rep(nfarm,n_piglet), 
                                                             demographic = rep(d_piglet,n_piglet), 
                                                             status = rep(piglet_status,n_piglet),
@@ -835,7 +990,8 @@ if(include_backyard==1)
                                                             next_d_date = rep(piglet_next_d_date,n_piglet),
                                                             next_s_date = piglet_immunity_date,
                                                             removal_date = day_piglet_mortality
-          )
+          )]
+          
           # UPDATE PIG ID
           current_pig_id = current_pig_id + n_piglet
           
@@ -851,23 +1007,23 @@ if(include_backyard==1)
       
       
       #===SOW PREGNANT EVENT=====================================
-      temp_pregnant_data = temp_data %>% filter((farrow_date==-1*return_to_heat)|((-1*farrow_date)-return_to_heat)%%30==0)
-      if(NROW(temp_pregnant_data)>0)
+      temp_pregnant_data = TEMP_ANIMAL_data_frame[((farrow_date==-1*return_to_heat)|((-1*farrow_date)-return_to_heat)%%30==0),id] 
+      if(length(temp_pregnant_data)>0)
       { 
-        for(animal in 1:NROW(temp_pregnant_data))
+        for(animal in 1:length(temp_pregnant_data))
         {
-          temp_id = temp_pregnant_data[animal,]$id
+          temp_id = temp_pregnant_data[animal]
           if(prob_mating!=1)
           {
             temp_mating = rbinom(1,1,prob_mating)
             if(temp_mating==1)
             {
-              ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$farrow_date = gestation_period
+              ANIMAL_data_frame[id==temp_id,farrow_date := gestation_period]
             }
           }
           else
           {
-            ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$farrow_date = gestation_period
+            ANIMAL_data_frame[id==temp_id,farrow_date := gestation_period]
           }
         }
         
@@ -880,18 +1036,19 @@ if(include_backyard==1)
       
       
       #====DEMOGRAPHIC AND DISEASE STATUS CHANGE=======================================
-      temp_data = ANIMAL_data_frame %>% filter(farm_id == nfarm)
-      temp_demographic_data = temp_data %>% filter(next_d_date == 0|next_s_date==0) #extract those changing demographic status
+      # temp_data = ANIMAL_data_frame %>% filter(farm_id == nfarm)
+      # temp_demographic_data = temp_data %>% filter(next_d_date == 0|next_s_date==0) #extract those changing demographic status
+      temp_demographic_data = TEMP_ANIMAL_data_frame[(next_d_date == 0|next_s_date==0)]
       if(NROW(temp_demographic_data)>0)
       {
         for(animal in 1:NROW(temp_demographic_data))
         {
-          this_animal = temp_demographic_data[animal,]
-          temp_id = this_animal$id
-          temp_demographic = this_animal$demographic
-          temp_status = this_animal$status
-          temp_d_date = this_animal$next_d_date
-          temp_s_date = this_animal$next_s_date
+          # this_animal = temp_demographic_data[animal,]
+          temp_id = temp_demographic_data[animal,id]
+          temp_demographic = temp_demographic_data[animal,demographic]
+          temp_status = temp_demographic_data[animal,status]
+          temp_d_date = temp_demographic_data[animal,next_d_date]
+          temp_s_date = temp_demographic_data[animal,next_s_date]
           if(temp_d_date==0)
           {
             # change demographic and assign new next_d_date
@@ -899,40 +1056,61 @@ if(include_backyard==1)
             if(current_demographic==d_piglet)
             {
               next_demographic = d_weaned
-              next_d_date = wean_to_grow
+              tem_next_d_date = wean_to_grow
               # UPDATE FARM TABLE
-              FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_PIGLET = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_PIGLET -1
-              FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_WEANED = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_WEANED + 1
+              FARM_data_frame[nfarm,
+                                                ":="(N_PIGLET = N_PIGLET -1,
+                                                     N_WEANED = N_WEANED + 1
+                                                )]
+              # FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_PIGLET = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_PIGLET -1
+              # FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_WEANED = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_WEANED + 1
               # UPDATE ANIMAL TABLE
-              ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$demographic = next_demographic
-              ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$next_d_date = next_d_date
+              ANIMAL_data_frame[id==temp_id,
+                                                    ":="(demographic = next_demographic,
+                                                         next_d_date = tem_next_d_date
+                                                    )]
+              # ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$demographic = next_demographic
+              # ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$next_d_date = next_d_date
               
             }
             else if(current_demographic==d_weaned)
             {
               next_demographic = d_fattening
-              next_d_date = 0
+              tem_next_d_date = 0
               # UPDATE FARM TABLE
-              FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_WEANED = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_WEANED -1
-              FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_FATTENING = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_FATTENING + 1
+              FARM_data_frame[nfarm,
+                                                ":="(N_WEANED = N_WEANED -1,
+                                                     N_FATTENING = N_FATTENING + 1
+                                                  
+                                                )]
               # UPDATE ANIMAL TABLE
-              ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$demographic = next_demographic
-              ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$next_d_date = next_d_date
-              ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$removal_date = grow_to_finish
+              ANIMAL_data_frame[id==temp_id,
+                                                    ":="(demographic = next_demographic,
+                                                         next_d_date = tem_next_d_date,
+                                                         removal_date = grow_to_finish
+                                                    )]
             }
             else if(current_demographic==d_gilt) # GILT BECOMING SOW
             {
               next_demographic = d_sow
-              next_d_date = 0 # @@@ check if needed to put next_d_date for gilts and need to include any events for sows
+              tem_next_d_date = 0 # @@@ check if needed to put next_d_date for gilts and need to include any events for sows
               # UPDATE FARM TABLE
-              FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_GILT = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_GILT -1
-              FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_FATTENING = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_FATTENING + 1
+              FARM_data_frame[nfarm,":="(N_GILT = N_GILT - 1,
+                                         N_FATTENING = N_FATTENING +1)]
+           
               # UPDATE ANIMAL TABLE
-              ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$demographic = next_demographic
-              ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$next_d_date = next_d_date
-              ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$removal_date = sample(first_farrow_cull_min:first_farrow_cull_max,1,replace=F)
-              ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$farrow_date = 1 # On the next day it'll farrow, then do farrowing events
-              ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$farrow_times = 0
+              ANIMAL_data_frame[id==temp_id,
+                                                    ":="(demographic = next_demographic,
+                                                         next_d_date = tem_next_d_date,
+                                                         removal_date = sample(first_farrow_cull_min:first_farrow_cull_max,1,replace=F),
+                                                         farrow_date = 1,
+                                                         farrow_times = 0
+                                                    )]
+              # ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$demographic = next_demographic
+              # ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$next_d_date = next_d_date
+              # ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$removal_date = sample(first_farrow_cull_min:first_farrow_cull_max,1,replace=F)
+              # ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$farrow_date = 1 # On the next day it'll farrow, then do farrowing events
+              # ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$farrow_times = 0
             }
           } # changing demographic done
           if(temp_s_date==0)
@@ -944,17 +1122,25 @@ if(include_backyard==1)
               next_status = s_I
               next_s_date = day_infectious
               # IF THIS FARM HAS NO INFECTED ANIMALS BEFORE, RECORD
-              if(FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_INFECTED==0)
+              if(FARM_data_frame[nfarm,N_INFECTED]==0)
               {
-                FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$day_p_start = current_day
+                FARM_data_frame[nfarm,day_p_start:=current_day] 
               }
               
               # UPDATE FARM TABLE
-              FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_EXPOSED = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_EXPOSED -1
-              FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_INFECTED = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_INFECTED + 1
+              FARM_data_frame[nfarm,
+                                                ":="(N_EXPOSED = N_EXPOSED -1,
+                                                     N_INFECTED = N_INFECTED + 1
+                                                )]
+              # FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_EXPOSED = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_EXPOSED -1
+              # FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_INFECTED = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_INFECTED + 1
               # UPDATE ANIMAL TABLE
-              ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$status = next_status
-              ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$next_s_date = next_s_date
+              ANIMAL_data_frame[id==temp_id,
+                                                    ":="(status = next_status,
+                                                         next_s_date = next_s_date
+                                                    )]
+              # ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$status = next_status
+              # ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$next_s_date = next_s_date
             }
             else if(current_status==s_I)
             {
@@ -962,16 +1148,25 @@ if(include_backyard==1)
               # next_s_date = round(-1*log(sample(1:100,1)/100)/(1/day_immunity_loss)) # get a random time to next event
               next_s_date =  round(rgamma(1,shape=shape_gamma_immunity,scale=scale_gamma)) #sample from gamma
               # UPDATE FARM TABLE
-              FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_INFECTED = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_INFECTED -1
-              FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_IMMUNE = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_IMMUNE + 1
+              FARM_data_frame[nfarm,
+                                                ":="(N_INFECTED = N_INFECTED -1,
+                                                     N_IMMUNE = N_IMMUNE + 1
+                                                  
+                                                )]
+              # FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_INFECTED = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_INFECTED -1
+              # FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_IMMUNE = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_IMMUNE + 1
               # UPDATE ANIMAL TABLE
-              ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$status = next_status
-              ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$next_s_date = next_s_date
+              ANIMAL_data_frame[id==temp_id,
+                                                    ":="(status = next_status,
+                                                         next_s_date = next_s_date
+                                                    )]
+              # ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$status = next_status
+              # ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$next_s_date = next_s_date
               # IF ALL INFECTED ANIMALS ARE GONE, RECORD
-              if(FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_INFECTED==0)
+              if(FARM_data_frame[nfarm,N_INFECTED]==0)
               {
                 
-                diff = current_day - FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$day_p_start
+                diff = current_day - FARM_data_frame[nfarm,day_p_start]
                 persistence_vector = c(persistence_vector,diff)
                 persistence_farm_id = c(persistence_farm_id,nfarm)
               }
@@ -981,11 +1176,19 @@ if(include_backyard==1)
               next_status = s_S
               next_s_date = 0
               # UPDATE FARM TABLE
-              FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_IMMUNE = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_IMMUNE -1
-              FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_SUSCEPTIBLE = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_SUSCEPTIBLE + 1
+              FARM_data_frame[nfarm,
+                                                ":="(N_IMMUNE = N_IMMUNE - 1,
+                                                     N_SUSCEPTIBLE = N_SUSCEPTIBLE + 1
+                                                )]
+              # FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_IMMUNE = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_IMMUNE -1
+              # FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_SUSCEPTIBLE = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_SUSCEPTIBLE + 1
               # UPDATE ANIMAL TABLE
-              ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$status = next_status
-              ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$next_s_date = next_s_date
+              ANIMAL_data_frame[id==temp_id,
+                                                    ":="(status = next_status,
+                                                         next_s_date = next_s_date
+                                                    )]
+              # ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$status = next_status
+              # ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$next_s_date = next_s_date
             }
           }
         }
@@ -1566,21 +1769,21 @@ if(include_commercial_farm==1)
 #========GOING THROUGH EACH DATE DONE====================================================#
 #-------------------------------------------------------------------------------------------
 
-
+}) # profvis
 # ERROR CHECK
-COM_ANIMAL_data_frame[unique_room_id==11] %>% NROW(.)
-COM_FARM_data_frame[unique_room_id==11]
-
-COM_ANIMAL_data_frame[unique_room_id==27] %>% NROW(.)
-COM_FARM_data_frame[unique_room_id==27]
-
-COM_ANIMAL_data_frame[unique_room_id==32] %>% NROW(.)
-COM_FARM_data_frame[unique_room_id==32]
-
-summary(COM_persistence[,1])
-summary(COM_persistence[,2])
-summary(COM_persistence[,3])
-COM_persistence[,1]
+# COM_ANIMAL_data_frame[unique_room_id==11] %>% NROW(.)
+# COM_FARM_data_frame[unique_room_id==11]
+# 
+# COM_ANIMAL_data_frame[unique_room_id==27] %>% NROW(.)
+# COM_FARM_data_frame[unique_room_id==27]
+# 
+# COM_ANIMAL_data_frame[unique_room_id==32] %>% NROW(.)
+# COM_FARM_data_frame[unique_room_id==32]
+# 
+# summary(COM_persistence[,1])
+# summary(COM_persistence[,2])
+# summary(COM_persistence[,3])
+# COM_persistence[,1]
 # head(FARM_data_frame,20)
 # nrow(FARM_data_frame[FARM_data_frame$N_PIGLET<0,])
 # nrow(FARM_data_frame[FARM_data_frame$N_WEANED<0,])
