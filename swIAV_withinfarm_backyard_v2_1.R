@@ -699,20 +699,19 @@ if(include_backyard==1)
     temp_demographic_data = TEMP_ANIMAL_data_frame1[(next_d_date == 0|next_s_date==0),c("id","farm_id","demographic","status","next_d_date","next_s_date")]
     if(NROW(temp_demographic_data)>0)
     {
+      temp_id_vec = temp_demographic_data[,id]
+      temp_farm_id_vec = temp_demographic_data[,farm_id]
       for(animal in 1:NROW(temp_demographic_data))
       {
         # this_animal = temp_demographic_data[animal,]
-        temp_id = temp_demographic_data[animal,id]
-        temp_demographic = temp_demographic_data[animal,demographic]
-        temp_status = temp_demographic_data[animal,status]
-        temp_d_date = temp_demographic_data[animal,next_d_date]
-        temp_s_date = temp_demographic_data[animal,next_s_date]
-        temp_farm_id = temp_demographic_data[animal,farm_id]
+        temp_id = temp_id_vec[animal]
+        temp_farm_id = temp_farm_id_vec[animal]
+       
         
-        if(temp_d_date==0)
+        if(temp_demographic_data[animal,next_d_date]==0)
         {
           # change demographic and assign new next_d_date
-          current_demographic = temp_demographic
+          current_demographic = temp_demographic_data[animal,demographic]
           if(current_demographic==d_piglet)
           {
             next_demographic = d_weaned
@@ -756,7 +755,7 @@ if(include_backyard==1)
             tem_next_d_date = 0 # @@@ check if needed to put next_d_date for gilts and need to include any events for sows
             # UPDATE FARM TABLE
             FARM_data_frame[temp_farm_id,":="(N_GILT = N_GILT - 1,
-                                       N_FATTENING = N_FATTENING +1)]
+                                       N_SOW = N_SOW +1)]
             
             # UPDATE ANIMAL TABLE
             ANIMAL_data_frame[id==temp_id,
@@ -773,10 +772,10 @@ if(include_backyard==1)
             # ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$farrow_times = 0
           }
         } # changing demographic done
-        if(temp_s_date==0)
+        if( temp_demographic_data[animal,next_s_date]==0)
         {
           # changing disease status
-          current_status = temp_status
+          current_status = temp_demographic_data[animal,status]
           if(current_status==s_E)
           {
             next_status = s_I
@@ -862,6 +861,7 @@ if(include_backyard==1)
         
  
     # CREATE removal_date = 0 data
+    TEMP_ANIMAL_data_frame1 = na.omit(ANIMAL_data_frame,cols="farm_id")
     TEMP_REMOVAL_id = TEMP_ANIMAL_data_frame1[removal_date==0,.N,by=farm_id][,farm_id]
     # setkey(TEMP_REMOVAL,farm_id)
     # CREATE farrow_date = 0 data
@@ -937,7 +937,7 @@ if(include_backyard==1)
             {
               # OPTION 1: REPLACE BY OWN PIGLET/GILT
               # temp_WEANER = ANIMAL_data_frame[ANIMAL_data_frame$farm_id == nfarm & ANIMAL_data_frame$sex == female &  ANIMAL_data_frame$demographic==d_weaned,]
-              temp_WEANER = TEMP_ANIMAL_data_frame1[farm_id == 1& sex == female &  demographic==d_weaned][order(next_d_date,decreasing=T)]
+              temp_WEANER = TEMP_ANIMAL_data_frame1[farm_id == i & sex == female &  demographic==d_weaned][order(next_d_date,decreasing=T)]
               
               # STEP 1: COMPARE temp_num and NROW(temp_WEANER), if NROW > temp_num, AVAILABLE GILT IS ENOUGH FOR REPLACEMENT
               if(NROW(temp_WEANER)>=temp_num)
@@ -1118,13 +1118,13 @@ if(include_backyard==1)
         # remove_data = ANIMAL_data_frame[farm_id == nfarm & removal_date==0][,current_day := current_day]
         # ANIMAL_data_frame = ANIMAL_data_frame[(farm_id != nfarm) | (farm_id == nfarm & removal_date!=0),]
         
-        # REMOVE_data_frame = REMOVE_data_frame %>% add_row(remove_data)
-        ANIMAL_data_frame[farm_id == i & removal_date==0, ":="(
-          farm_id = NA,
-          alive = 0
-        )]
-      }
       
+      }
+    # UPDATE farm_id OF ANIALS THAT WERE REMOVED
+    ANIMAL_data_frame[removal_date==0, ":="(
+      farm_id = NA,
+      alive = 0
+    )]
       
       
       # @@@ how to differentiate culling and death? also now not considering mortality except pigs, what to do?
