@@ -937,7 +937,7 @@ if(backyard_or_commercial==0)
               persistence_farm_id = c(persistence_farm_id,temp_farm_id)
             }
           }
-          else if(current_status==s_R)
+          else if(current_status==s_R|current_status==s_mda)
           {
             
             # UPDATE FARM TABLE
@@ -1939,4 +1939,9 @@ if(backyard_or_commercial==1)
 list_persistence_vector[[k]] = persistence_vector
 list_persistence_farm[[k]] = persistence_farm_id
 
+# SAVE PREVALENCE DATA
+ANIMAL_data_frame[is.na(farm_id),] %>% filter(demographic==d_piglet) %>% count(status)
+ANIMAL_data_frame[is.na(farm_id),] %>% filter(demographic==d_sow) %>% group_by(farrow_times) %>% count(status)
+
+  group_by(demographic) %>% count(status)
 }
