@@ -20,6 +20,19 @@ source("User_define_parameters_swIAV.R")
 
 list_persistence_vector = vector("list",nrow(parameters))
 list_persistence_farm = vector("list",nrow(parameters))
+list_prev_piglet_status = vector("list",nrow(parameters))
+list_prev_piglet_count = vector("list",nrow(parameters))
+
+list_prev_weaner_status = vector("list",nrow(parameters))
+list_prev_weaner_count = vector("list",nrow(parameters))
+
+list_prev_fattening_status = vector("list",nrow(parameters))
+list_prev_fattening_count = vector("list",nrow(parameters))
+
+list_prev_sow_status = vector("list",nrow(parameters))
+list_prev_sow_count = vector("list",nrow(parameters))
+
+
 
 for(k in 1:nrow(parameters)){
   
@@ -33,6 +46,12 @@ for(k in 1:nrow(parameters)){
   beta_direct = r0/day_infectious # need to refine, density-dependent? Assuming R0 = 3, D = 6 then beta = beta_direct/N (now fequency-dependent)
   beta_indirect = beta_direct/24 # Cador 2017
  
+   # INITIALIZE
+  current_day = 0 # days in simulation
+  count_month = 0 # months in simulation
+  current_pig_id = 0
+  farm_id = 0
+  
 # demographic and status: see above. sex: female 0 and male 1. age in months. 
 # immunity_date: day until immunity dissapears. next_d_date: day until weaning. 
 # infection_history: 0 not infected before. 1 infected before. Needs to consider multiple subtype maybe. 
@@ -1940,8 +1959,20 @@ list_persistence_vector[[k]] = persistence_vector
 list_persistence_farm[[k]] = persistence_farm_id
 
 # SAVE PREVALENCE DATA
-ANIMAL_data_frame[is.na(farm_id),] %>% filter(demographic==d_piglet) %>% count(status)
-ANIMAL_data_frame[is.na(farm_id),] %>% filter(demographic==d_sow) %>% group_by(farrow_times) %>% count(status)
+removed = ANIMAL_data_frame[is.na(farm_id),]
+list_prev_piglet_status[[k]] = removed %>% filter(demographic==d_piglet) %>% count(status) %>% pull(status)
+list_prev_piglet_count[[k]] = removed %>% filter(demographic==d_piglet) %>% count(status) %>% pull(n)
 
-  group_by(demographic) %>% count(status)
+list_prev_weaner_status[[k]] = removed %>% filter(demographic==d_weaned) %>% count(status) %>% pull(status)
+list_prev_weaner_count[[k]] = removed %>% filter(demographic==d_weaned) %>% count(status) %>% pull(n)
+
+list_prev_fattening_status[[k]] = removed %>% filter(demographic==d_fattening) %>% count(status) %>% pull(status)
+list_prev_fattening_count[[k]] = removed %>% filter(demographic==d_fattening) %>% count(status) %>% pull(n)
+
+list_prev_sow_status[[k]] = removed %>% filter(demographic==d_sow) %>% count(status) %>% pull(status)
+list_prev_sow_count[[k]] = removed %>% filter(demographic==d_sow) %>% count(status) %>% pull(n)
+
+
+# 
+#   group_by(demographic) %>% count(status)
 }
