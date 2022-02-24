@@ -418,8 +418,13 @@ while(current_day<length_simulation_day)
   #=========GOING THROUGH EACH DATE=====================================================
   # UPDATE DAY AND COUNT OF EACH EVENT
   current_day = current_day + 1
-  current_month = (current_day %/% 30 + 5) %% 12 + 1  # it's 5 because the simulation starts in May
-  current_year = current_day %/% 365
+  # current_month = (current_day %/% 30 + 5) %% 12  # it's 5 because the simulation starts in May
+  current_month = (current_day %/% 30) %% 12 + 1 # it's 5 because the simulation starts in May
+    # if(current_month==0)
+    # {
+    #   current_month = 12
+    # }
+  current_year = current_day %/% 360
   # persistence_farm_x = c(persistence_farm_x,FARM_data_frame[x,]$N_INFECTED)
   # immune_farm_x = c(immune_farm_x,FARM_data_frame[x,]$N_IMMUNE)
   
@@ -501,7 +506,13 @@ if(backyard_or_commercial==0)
 #                                         FARROWING EVENT         
 #*********************************************************************************************************
 #*
-#*        
+#*  Explaner of the following procedure
+#*  Find sows that are farrowing
+#*  Calculate the total number of piglets born from all sows farrowing
+#*  Calculate how many piglets die for each sow
+#*  Update farrow times and assign weaning date for sows
+#*  Visit each sow and determine the characteristics of their piglets
+#*  
     # temp_data = ANIMAL_data_frame %>% filter(farm_id == nfarm)
     # temp_farrowing_data = temp_data %>% filter(farrow_date==0)
     # setkey(TEMP_ANIMAL_data_frame,farrow_date)
@@ -532,7 +543,7 @@ if(backyard_or_commercial==0)
       # ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$next_d_date = piglet_next_d_date # WEANING DATE
       ANIMAL_data_frame[id %in% TEMP_FARROW_dat[,id],":="(
         farrow_times = farrow_times+1,
-        next_d_date = wean_day)]
+        next_d_date = 0)] # ok what happens when sow gets 0 for demographic event? Nothing. How do we know when they get heat?
       
       # WHEN farrow_times reaches = cull_cylce then add culling event TO DO
       
@@ -569,22 +580,27 @@ if(backyard_or_commercial==0)
         # Many of these parts are added on Feb 2022 to accommodate the status of Cambodian smallholder
         temp_death_date = sample(1:wean_day,temp_num_death,replace=T)
         # Prepare piglet sex that won't die before weaning so that weaners can be kept if needed
-        temp_sex_nodeath = temp_sex[-(1:length(temp_death_date))]
+        # So calculate the number of piglets that die
+        # Remove this element from the vector of sex
+        temp_sex_nodeath = temp_sex[-(1:temp_num_death)]
         if(temp_typo == t_breed) # if HHs are Breeding
         {
           temp_nodeath_date = rep(wean_day,n_piglet-temp_num_death)
-          if(temp_farrow==cull_cycle)
+          if(temp_farrow==(cull_cycle-1))
           {
            
-            # TO DO need to decide how many weaners to keep
+            # TODO need to decide how many weaners to keep
+            # If there are female piglets that will survive
             if(sum(temp_sex_nodeath) < length(temp_sex_nodeath))
             {
-              # if there are female
+              
               # first female stays on farm as replacement
-              female_position1 = seq(1:length(temp_sex_nodeath))[temp_sex==female][1]
+              female_position1 = seq(1:length(temp_sex_nodeath))[temp_sex_nodeath==female][1]
               temp_nodeath_date[female_position1] = -1 # indicate this will be kept for weaner
               temp_piglet_demographic[temp_num_death+female_position1] = d_replace_piglet
-              
+              # print("replacement")
+              # print(paste0(c("piglet demo is ",temp_piglet_demographic)))
+              # print(paste0("temp+num_death is ",temp_num_death," pos is ",female_position1))
             }
             # SET CULLING DATE FOR THIS SOW EVEN IF REPLACEMENT IS NOT SCECURED
             ANIMAL_data_frame[id == temp_sow_id, removal_date := wean_day]
@@ -598,7 +614,7 @@ if(backyard_or_commercial==0)
         temp_day_piglet_mortality = c(temp_death_date,temp_nodeath_date)
         day_piglet_mortality[current_piglet:(current_piglet+n_piglet-1)] = temp_day_piglet_mortality
         piglet_sex[current_piglet:(current_piglet+n_piglet-1)] = temp_sex
-       
+        piglet_demographic[current_piglet:(current_piglet+n_piglet-1)] = temp_piglet_demographic
         
         
         
@@ -610,7 +626,9 @@ if(backyard_or_commercial==0)
         # piglet_next_d_date_piglet[current_piglet:(current_piglet+n_piglet-1)] = piglet_next_d_date[i]
         piglet_next_d_date_piglet[current_piglet:(current_piglet+n_piglet-1)] = wean_day + 1
           # By adding 1, ease the computation by not changing their demographic status if they are removed on the same day
-        
+          # This means that replacement piglet becomes d_replace_weaned on wean_day + 1
+          # So, when sows are removed at weaning day, replacement is still piglet
+          # Are these piglets removed? - Yes they are
         
         if(temp_status==s_R)
         {
@@ -646,7 +664,7 @@ if(backyard_or_commercial==0)
       ANIMAL_data_frame[id %in% (seq_along(1:n_total_piglet)+current_pig_id),
                         ":="(
                           farm_id = piglet_farm_id, 
-                          demographic = rep(d_piglet,n_total_piglet), 
+                          demographic = piglet_demographic, 
                           status = piglet_status,
                           # age = rep(0,n_total_piglet), 
                           # TO DO need to determine sex earlier
@@ -1022,9 +1040,13 @@ if(backyard_or_commercial==0)
   #-----------REMOVING SOWS THEN REPLACEMENT--------------------------------------------#
           else if(temp_demo==d_sow) # @@@ REPLACE BY NEW GILTS
           {
+          
             # WHEN REPLACING SOW, THEIR PIGLETS SHOULD BE STILL PIGLETS, NOT WEANER
             FARM_data_frame[i,N_SOW := N_SOW - temp_num]
             
+            
+            # TODO Do we need the following step?
+            # replacement piglet is already marked
             # EXTRACT FARM POLICY
             temp_policy = FARM_data_frame[i,introduce_replace_gilt]
             
@@ -1033,41 +1055,48 @@ if(backyard_or_commercial==0)
               # OPTION 1: REPLACE BY OWN PIGLET/GILT
               # temp_WEANER = ANIMAL_data_frame[ANIMAL_data_frame$farm_id == nfarm & ANIMAL_data_frame$sex == female &  ANIMAL_data_frame$demographic==d_weaned,]
               # temp_WEANER = TEMP_ANIMAL_data_frame1[farm_id == i & sex == female &  demographic==d_weaned][order(next_d_date,decreasing=T)]
-              temp_WEANER = TEMP_ANIMAL_data_frame1[farm_id == i & demographic==d_replace_weaned]
               
-              # STEP 1: COMPARE temp_num and NROW(temp_WEANER), if NROW > temp_num, AVAILABLE GILT IS ENOUGH FOR REPLACEMENT
-              if(NROW(temp_WEANER)>=temp_num)
-              {
-                # temp_WEANER = temp_WEANER[order(temp_WEANER$next_d_date),]
-                temp_WEANER_id = temp_WEANER[1:temp_num,id]
-                ANIMAL_data_frame[id %in% temp_WEANER_id, ":="(
-                  demographic = d_gilt,
-                  next_d_date = next_d_date + grow_to_first_farrow
-                )
-                                  ]
-                # NEED To CHANGE next_d_date
-               
-                FARM_data_frame[i,":="(
-                                          N_WEANED = N_WEANED -temp_num,
-                                          N_GILT = N_GILT + temp_num)]
-               
-              }
+              temp_WEANER = TEMP_ANIMAL_data_frame1[farm_id == i & demographic==d_replace_piglet]
+              # print(paste0(temp_num," sow is removed AND replacement is ", nrow(temp_WEANER)))
+              # This is removed as it's duplicate of what I was doing in marking replacement at the last farrow
+              
+              # # STEP 1: COMPARE temp_num and NROW(temp_WEANER), if NROW > temp_num, AVAILABLE GILT IS ENOUGH FOR REPLACEMENT
+              # if(NROW(temp_WEANER)>=temp_num)
+              # {
+              #   # temp_WEANER = temp_WEANER[order(temp_WEANER$next_d_date),]
+              #   temp_WEANER_id = temp_WEANER[1:temp_num,id]
+              #   ANIMAL_data_frame[id %in% temp_WEANER_id, ":="(
+              #     demographic = d_gilt,
+              #     next_d_date = next_d_date + grow_to_first_farrow
+              #   )
+              #                     ]
+              #   # NEED To CHANGE next_d_date
+              #  
+              #   FARM_data_frame[i,":="(
+              #                             N_WEANED = N_WEANED -temp_num,
+              #                             N_GILT = N_GILT + temp_num)]
+              #  
+              # }
               # STEP 2: IF temp_num > NROW, TAKE ALL WEANER INTO GILTS. TAKE REMAINING FROM PURCHASE
-              else if(NROW(temp_WEANER)<temp_num & NROW(temp_WEANER)>=0)
+              # else if(NROW(temp_WEANER)<temp_num & NROW(temp_WEANER)>=0)
+              if(NROW(temp_WEANER)<temp_num)
               {
-                temp_WEANER_id = temp_WEANER$id 
-                if(NROW(temp_WEANER)>0)
-                {
-                  ANIMAL_data_frame[id %in% temp_WEANER_id,":="(
-                                                                next_d_date = next_d_date + grow_to_first_farrow,
-                                                                demographic = d_gilt)]
-                  
-                  FARM_data_frame[i,N_WEANED := N_WEANED -NROW(temp_WEANER)]
-                }
+                # print("Purchasing gilt")
+                # temp_WEANER_id = temp_WEANER$id 
+                # if(NROW(temp_WEANER)>0)
+                # {
+                #   ANIMAL_data_frame[id %in% temp_WEANER_id,":="(
+                #                                                 next_d_date = next_d_date + grow_to_first_farrow,
+                #                                                 demographic = d_gilt)]
+                #   
+                #   FARM_data_frame[i,N_WEANED := N_WEANED -NROW(temp_WEANER)]
+                # }
                 
-                FARM_data_frame[i,N_GILT := N_GILT + temp_num]
+                # INTRODUCE GILT
                 # REMAINING FROM PURCHASE - introduce temp_num animals
                 temp_num = temp_num - NROW(temp_WEANER)
+                FARM_data_frame[i,N_GILT := N_GILT + temp_num]
+                
                 # ADD GILT - WHEN TO ADD? INFECTION STATUS OF GILT (BASED On GLOBAL PREVALENCE FOR NOW)
                 temp_gilt_status = rbinom(temp_num,1,prev_IAV_gilt)
                 temp_s_date = ifelse(temp_gilt_status==1,day_latent,0)
