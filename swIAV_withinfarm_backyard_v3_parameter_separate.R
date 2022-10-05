@@ -16,6 +16,8 @@ source("Cambodia_pig_parameters.R")
 # IMPORT USER DEFINE PARAMETRE
 source("User_define_parameters_swIAV.R")
 
+Today = Sys.Date()
+File_name = paste0("SWIAV_",Today,"_",Scenario_name)
 # profvis({
 
 list_persistence_vector = vector("list",nrow(parameters))
@@ -32,7 +34,9 @@ list_prev_fattening_count = vector("list",nrow(parameters))
 list_prev_sow_status = vector("list",nrow(parameters))
 list_prev_sow_count = vector("list",nrow(parameters))
 
-
+list_piglet_prev = vector("list",nrow(parameters))
+list_sow_prev = vector("list",nrow(parameters))
+list_sow_seroprev = vector("list",nrow(parameters))
 
 for(k in 1:nrow(parameters)){
   
@@ -43,6 +47,15 @@ for(k in 1:nrow(parameters)){
   cull_cycle = parameters[k,5]
  
   r0 = parameters[k,6]
+  expand_target = parameters[k,7]
+  
+  # prev_IAV_gilt = parameters[k,8]
+  prev_IAV_gilt = 0 # set gilt prev = 0
+  
+  prev_IAV_boar = parameters[k,8]
+  
+  synchro = parameters[k,9]
+  
   beta_direct = r0/day_infectious # need to refine, density-dependent? Assuming R0 = 3, D = 6 then beta = beta_direct/N (now fequency-dependent)
   beta_indirect = beta_direct/24 # Cador 2017
  
@@ -56,7 +69,7 @@ for(k in 1:nrow(parameters)){
 # immunity_date: day until immunity dissapears. next_d_date: day until weaning. 
 # infection_history: 0 not infected before. 1 infected before. Needs to consider multiple subtype maybe. 
 
-# SETTING UP FARM_data_frame - now onlyconsidering farrow-to-finish but this needs to be updated
+# SETTING UP FARM_data_frame - now only considering farrow-to-finish but this needs to be updated
   prob_mating = mate_success
 #=============SETTING UP BACKYARD FARM================================================================#
 if(backyard_or_commercial==0)
@@ -65,7 +78,8 @@ if(backyard_or_commercial==0)
  
   
   # PRE-DEFINE THE NUMBER OF ROWS 
-  N_INITIAL_BACKYARD = ceiling(length_simulation_day/360*litter_size_max*2*n_backyard*herd_size*2) #// assuming 2 farrow/sow/year
+  N_INITIAL_BACKYARD = ceiling(length_simulation_day/360*litter_size_max*2*n_backyard*(herd_size+expand_target*2*length_simulation_day/360)*2) #// assuming 2 farrow/sow/year
+    # now expanding so need to consider the final herd size
     
   EMPTY_data_table = data.table(id = seq(1,N_INITIAL_BACKYARD), 
                                 farm_id = integer(), 
@@ -83,8 +97,6 @@ if(backyard_or_commercial==0)
                                 alive = integer()
                                 
   ) 
-  
-  
   
   
   
@@ -127,75 +139,123 @@ if(backyard_or_commercial==0)
   ANIMAL_data_frame = copy(EMPTY_data_table)
   
   # FOR EACH FARM INITIALISE, ADD SOWS FIRST
-  for(i in 1:n_backyard)
-  {
-    # temp_init = sample(1:max_h_size,1)
-    temp_init = herd_size
-    # UPDATE FARM_data_frame
-    FARM_data_frame = FARM_data_frame[i,
-                                      ':='(N_PIGLET=0,
-                                           N_WEANED =0,
-                                           N_FATTENING = 0,
-                                           N_GILT = 0,
-                                           N_SOW = temp_init,
-                                           N_BOAR = 0,
-                                           N_INFECTED = 0,
-                                           N_IMMUNE = 0,
-                                           N_MDA = 0,
-                                           N_TOTAL = temp_init,
-                                           farm_type = backyard_farm_type
-                                           
-                                      )]
-    # FARM_data_frame[i,]$N_PIGLET = 0
-    # FARM_data_frame[i,]$N_WEANED = 0
-    # FARM_data_frame[i,]$N_FATTENING = 0                                            
-    # FARM_data_frame[i,]$N_GILT = 0 
-    # FARM_data_frame[i,]$N_SOW = temp_init 
-    # FARM_data_frame[i,]$N_BOAR = 0 
+  # BREEDING
+          for(i in 1:n_backyard_breed)
+          {
+            # temp_init = sample(1:max_h_size,1)
+            temp_init = herd_size
+            # UPDATE FARM_data_frame
+            FARM_data_frame = FARM_data_frame[i,
+                                              ':='(N_PIGLET=0,
+                                                   N_WEANED =0,
+                                                   N_FATTENING = 0,
+                                                   N_GILT = 0,
+                                                   N_SOW = temp_init,
+                                                   N_BOAR = 0,
+                                                   N_INFECTED = 0,
+                                                   N_IMMUNE = 0,
+                                                   N_MDA = 0,
+                                                   N_TOTAL = temp_init,
+                                                   farm_type = backyard_farm_type
+                                                   
+                                              )]
+            # FARM_data_frame[i,]$N_PIGLET = 0
+            # FARM_data_frame[i,]$N_WEANED = 0
+            # FARM_data_frame[i,]$N_FATTENING = 0                                            
+            # FARM_data_frame[i,]$N_GILT = 0 
+            # FARM_data_frame[i,]$N_SOW = temp_init 
+            # FARM_data_frame[i,]$N_BOAR = 0 
+            
+            # if(rbinom(1,1,prev_farm)==1) #why do we randomly choose initial status?
+            # {
+              FARM_data_frame[i,]$N_EXPOSED = 1
+              FARM_data_frame[i,]$N_SUSCEPTIBLE = temp_init - 1
+              temp_exposed_id = sample(1:temp_init,1)
+              temp_status = rep(s_S,temp_init)
+              temp_status[temp_exposed_id] = s_E
+              temp_s_date = rep(0,temp_init)
+              temp_s_date[temp_exposed_id] = day_latent
+            # } 
+            # else
+            # {
+            #   FARM_data_frame[i,]$N_EXPOSED = 0
+            #   temp_status = rep(s_S,temp_init)
+            #   temp_s_date = rep(0,temp_init)
+            #   FARM_data_frame[i,]$N_SUSCEPTIBLE = temp_init
+            # }
+            # FARM_data_frame[i,]$N_INFECTED = 0
+            # FARM_data_frame[i,]$N_IMMUNE = 0
+            # FARM_data_frame[i,]$N_MDA = 0
+            # FARM_data_frame[i,]$N_TOTAL = temp_init
+            # THIS CAN BE DIFFERENT IF THE INITIAL CONDITION IS DIFFERENT
+            
+            init_sow_id= seq_along(1:temp_init) + current_pig_id
+            current_pig_id = current_pig_id + temp_init
+            ANIMAL_data_frame[init_sow_id, ":="(
+                                                              farm_id = rep(i,length(init_sow_id)), 
+                                                              demographic = rep(d_sow,length(init_sow_id)),
+                                                              sex = rep(female,length(init_sow_id)), 
+                                                              status = temp_status,
+                                                              # TO DO: assign random number
+                                                              farrow_times = rep(0,length(init_sow_id)),
+                                                              next_s_date = temp_s_date,
+                                                              alive = 0
+            )]                                        
+            
+          }
+  # IF FATTENING is included
+  if(n_backyard > n_backyard_breed){
     
-    if(rbinom(1,1,prev_farm)==1) #why do we randomly choose initial status?
-    {
-      FARM_data_frame[i,]$N_EXPOSED = 1
-      FARM_data_frame[i,]$N_SUSCEPTIBLE = temp_init - 1
-      temp_exposed_id = sample(1:temp_init,1)
-      temp_status = rep(s_S,temp_init)
-      temp_status[temp_exposed_id] = s_E
-      temp_s_date = rep(0,temp_init)
-      temp_s_date[temp_exposed_id] = day_latent
-    } else
-    {
-      FARM_data_frame[i,]$N_EXPOSED = 0
-      temp_status = rep(s_S,temp_init)
-      temp_s_date = rep(0,temp_init)
-      FARM_data_frame[i,]$N_SUSCEPTIBLE = temp_init
-    }
-    # FARM_data_frame[i,]$N_INFECTED = 0
-    # FARM_data_frame[i,]$N_IMMUNE = 0
-    # FARM_data_frame[i,]$N_MDA = 0
-    # FARM_data_frame[i,]$N_TOTAL = temp_init
-    # THIS CAN BE DIFFERENT IF THE INITIAL CONDITION IS DIFFERENT
-    
-    init_sow_id= seq_along(1:temp_init) + current_pig_id
-    current_pig_id = current_pig_id + temp_init
-    ANIMAL_data_frame[init_sow_id, ":="(
-                                                      farm_id = rep(i,length(init_sow_id)), 
-                                                      demographic = rep(d_sow,length(init_sow_id)),
-                                                      sex = rep(female,length(init_sow_id)), 
-                                                      status = temp_status,
-                                                      # TO DO: assign random number
-                                                      farrow_times = rep(0,length(init_sow_id)),
-                                                      next_s_date = temp_s_date,
-                                                      alive = 1
-    )]                                        
-    
+
+              for(i in (n_backyard_breed+1):n_backyard)
+              {
+                # temp_init = sample(1:max_h_size,1)
+                temp_init = herd_size
+                # UPDATE FARM_data_frame
+                FARM_data_frame = FARM_data_frame[i,
+                                                  ':='(N_PIGLET=0,
+                                                       N_WEANED =0,
+                                                       N_FATTENING = 0,
+                                                       N_GILT = 0,
+                                                       N_SOW = temp_init,
+                                                       N_BOAR = 0,
+                                                       N_EXPOSED = 0,
+                                                       N_SUSCEPTIBLE = 0,
+                                                       N_INFECTED = 0,
+                                                       N_IMMUNE = 0,
+                                                       N_MDA = 0,
+                                                       N_TOTAL = temp_init,
+                                                       farm_type = backyard_farm_type
+                                                       
+                                                  )]
+          
+                
+                # if(rbinom(1,1,prev_farm)==1) #why do we randomly choose initial status?
+                # {
+                FARM_data_frame[i,]$N_EXPOSED = 1
+                FARM_data_frame[i,]$N_SUSCEPTIBLE = temp_init - 1
+                temp_exposed_id = sample(1:temp_init,1)
+                temp_status = rep(s_S,temp_init)
+                temp_status[temp_exposed_id] = s_E
+                temp_s_date = rep(0,temp_init)
+                temp_s_date[temp_exposed_id] = day_latent
+      
+                
+                                                    
+                
+              }
   }
   setDT(FARM_data_frame)
   # setkeyv(FARM_data_frame,c("farm_id"))
   
   # INITIAL CONDITION
   # SOW
-  
-  first_farrow = sample(as.numeric(as.Date('2020-08-01') - start_date),current_pig_id,replace=T)
+  if(synchro==0){
+    first_farrow = sample(as.numeric(as.Date('2020-08-01') - start_date),current_pig_id,replace=T)
+  }else
+  {
+    first_farrow = sample(as.numeric(as.Date('2020-08-01') - start_date),1,replace=T)
+  }
   # if farrow_date >0 meaning that it's pregnant. 0 means it's empty
 
   # Better way is to pick up a random number of farrowing so far then assigne age.
@@ -429,7 +489,8 @@ farrow_x = c()
 COM_persistence = c()
 
 #=================================================================================
-
+# INITIALIZATION OF PARAMETERS
+piglet_kept_6mo = rep(0,n_backyard) # counter how many piglets are kept in the previous 6 mo, back to 0 every 6mo
 
 #=========START SIMULATION==========================================================
 while(current_day<length_simulation_day)
@@ -437,6 +498,13 @@ while(current_day<length_simulation_day)
   #=========GOING THROUGH EACH DATE=====================================================
   # UPDATE DAY AND COUNT OF EACH EVENT
   current_day = current_day + 1
+  current_day_180 = current_day%%180
+  # Reset the target of herd expansion every 6 mo
+    if(current_day_180==0)
+    {
+      piglet_kept_6mo[1:n_backyard] = 0 # Reset
+    }
+  
   # current_month = (current_day %/% 30 + 5) %% 12  # it's 5 because the simulation starts in May
   current_month = (current_day %/% 30) %% 12 + 1 # it's 5 because the simulation starts in May
     # if(current_month==0)
@@ -594,6 +662,9 @@ if(backyard_or_commercial==0)
         # but also if this is the last farrowing they keep weaners
         temp_piglet_demographic = rep(d_piglet,n_piglet)
         temp_num_death = n_piglet_mortality_vec[i]
+        
+        # Extract piglet_kept_6mo for a given farm
+        temp_piglet_kept = piglet_kept_6mo[nfarm]
         # --------SETTING REMOVAL DATE-----------------------
         # first assign death date for those died during piglet
         # Many of these parts are added on Feb 2022 to accommodate the status of Cambodian smallholder
@@ -602,29 +673,57 @@ if(backyard_or_commercial==0)
         # So calculate the number of piglets that die
         # Remove this element from the vector of sex
         temp_sex_nodeath = temp_sex[-(1:temp_num_death)]
-        if(temp_typo == t_breed) # if HHs are Breeding
+        if(temp_typo == t_breed|temp_typo==t_breed_exp) # if HHs are Breeding 
+          # TODO need to add t_breed_exp
         {
-          temp_nodeath_date = rep(wean_day,n_piglet-temp_num_death)
-          if(temp_farrow==(cull_cycle-1))
+          temp_nodeath_date = rep(wean_day,n_piglet-temp_num_death) # if not dying during piglet, then removed at weaning
+          if(temp_farrow==(cull_cycle-1) | (temp_piglet_kept < expand_target))
           {
-           
-            # TODO need to decide how many weaners to keep
+            
+            
+            # TODO need to decide how many weaners to keep when herds are expanding
             # If there are female piglets that will survive
+            # female is 0 so if length is greater than sum, it means there are female
             if(sum(temp_sex_nodeath) < length(temp_sex_nodeath))
             {
-              
+              num_retain = 0
+              if(temp_farrow==(cull_cycle-1))
+                    {
+                # if replacing for culled sow, just 1 piglet
+                      num_retain = 1
+                    }
+              if(temp_piglet_kept < expand_target)
+                    {
+                # if expanding herds, keep the target number or number of females available, whichever smaller
+                      max_female = length(temp_sex_nodeath) - sum(temp_sex_nodeath) - num_retain
+                      # If it's the last farrowing, then we already keep 1 piglet from this piglet batch
+                      # Hence the number of available female is -1
+                      num_target = expand_target-temp_piglet_kept
+                      min_female_target = min(max_female,num_target)
+                      num_retain = num_retain + min_female_target
+                      piglet_kept_6mo[nfarm] = temp_piglet_kept + min_female_target
+                    }
               # first female stays on farm as replacement
-              female_position1 = seq(1:length(temp_sex_nodeath))[temp_sex_nodeath==female][1]
-              temp_nodeath_date[female_position1] = -1 # indicate this will be kept for weaner
-              temp_piglet_demographic[temp_num_death+female_position1] = d_replace_piglet
-              # print("replacement")
-              # print(paste0(c("piglet demo is ",temp_piglet_demographic)))
-              # print(paste0("temp+num_death is ",temp_num_death," pos is ",female_position1))
+              if(num_retain>0)
+              {
+                female_position1 = seq(1:length(temp_sex_nodeath))[temp_sex_nodeath==female]
+                female_position1 = female_position1[1:num_retain]
+                temp_nodeath_date[female_position1] = -1 # indicate this will be kept for weaner
+                temp_piglet_demographic[temp_num_death+female_position1] = d_replace_piglet
+                # print("replacement")
+                # print(paste0(c("piglet demo is ",temp_piglet_demographic)))
+                # print(paste0("temp+num_death is ",temp_num_death," pos is ",female_position1))
+              }
+     
             }
             # SET CULLING DATE FOR THIS SOW EVEN IF REPLACEMENT IS NOT SCECURED
             ANIMAL_data_frame[id == temp_sow_id, removal_date := wean_day]
             
           }
+         
+              
+              
+              
         }else{
           temp_nodeath_date = rep(-1,n_piglet-n_piglet_mortality_vec[i]) # if not Breeding, not removed
           
@@ -634,7 +733,8 @@ if(backyard_or_commercial==0)
         day_piglet_mortality[current_piglet:(current_piglet+n_piglet-1)] = temp_day_piglet_mortality
         piglet_sex[current_piglet:(current_piglet+n_piglet-1)] = temp_sex
         piglet_demographic[current_piglet:(current_piglet+n_piglet-1)] = temp_piglet_demographic
-        
+        # now add age = 999 to indicate that piglets become weaners
+        # age_temp = c(rep(NA,length(temp_death_date)),rep(999,length(temp_nodeath_date)))
         
         
         # Because not all piglets are dying, indicate removeal_date = 0 if they don't die while piglets
@@ -643,11 +743,18 @@ if(backyard_or_commercial==0)
         piglet_farm_id[current_piglet:(current_piglet+n_piglet-1)] = nfarm
         # Assigning the next demographic event date: obsolete, not any more random weaning date. Fixed. 
         # piglet_next_d_date_piglet[current_piglet:(current_piglet+n_piglet-1)] = piglet_next_d_date[i]
-        piglet_next_d_date_piglet[current_piglet:(current_piglet+n_piglet-1)] = wean_day + 1
-          # By adding 1, ease the computation by not changing their demographic status if they are removed on the same day
-          # This means that replacement piglet becomes d_replace_weaned on wean_day + 1
-          # So, when sows are removed at weaning day, replacement is still piglet
-          # Are these piglets removed? - Yes they are
+        piglet_next_d_date_piglet[current_piglet:(current_piglet+n_piglet-1)] = wean_day - 1
+         ###################################################################################
+         ######  Idea has changed   ########################################################
+        # Initially thought....
+               # By adding 1, ease the computation by not changing their demographic status if they are removed on the same day
+                # This means that replacement piglet becomes d_replace_weaned on wean_day + 1
+                # So, when sows are removed at weaning day, replacement is still piglet
+                # Are these piglets removed? - Yes they are
+        # Second thought...
+                # As I need to know the prevalence among weaners, not changing the demographic status is confusing because
+                # I can't differentiate those died during piglets and those removed as weaners (Task 22)
+                # Therefore changing from 'wean_day + 1'to 'wean_day -1'
         
         if(temp_status==s_R)
         {
@@ -927,7 +1034,7 @@ if(backyard_or_commercial==0)
           {
                                                                                 # print("S I event") # Error check
             
-            next_status = 
+            # next_status = 
             # next_s_date = round(-1*log(sample(1:100,1)/100)/(1/day_immunity_loss)) # get a random time to next event
             temp_next_s_date =  round(rgamma(1,shape=shape_gamma_immunity,scale=scale_gamma)) #sample from gamma
             # UPDATE FARM TABLE
@@ -1268,8 +1375,9 @@ if(backyard_or_commercial==0)
       }
     # UPDATE farm_id OF ANIALS THAT WERE REMOVED
     ANIMAL_data_frame[removal_date==0, ":="(
-      farm_id = NA,
-      alive = 0
+      alive = farm_id,
+      farm_id = NA
+      # alive = 0 # previousy set to 0 but I'm not using 'alive' information anymore. Replace by alive = farm_id so that we know which farms animal come from
     )]
       
       
@@ -1862,7 +1970,6 @@ if(backyard_or_commercial==1)
 #========GOING THROUGH EACH DATE DONE====================================================#
 #-------------------------------------------------------------------------------------------
 
-# }) # profvis
 # ERROR CHECK
 # COM_ANIMAL_data_frame[unique_room_id==11] %>% NROW(.)
 # COM_FARM_data_frame[unique_room_id==11]
@@ -1957,22 +2064,77 @@ if(backyard_or_commercial==1)
 # SAVE PERSISTENCE DATA
 list_persistence_vector[[k]] = persistence_vector
 list_persistence_farm[[k]] = persistence_farm_id
-
-# SAVE PREVALENCE DATA
+# 
+# # SAVE PREVALENCE DATA
 removed = ANIMAL_data_frame[is.na(farm_id),]
-list_prev_piglet_status[[k]] = removed %>% filter(demographic==d_piglet) %>% count(status) %>% pull(status)
-list_prev_piglet_count[[k]] = removed %>% filter(demographic==d_piglet) %>% count(status) %>% pull(n)
+# removed_piglet =  removed %>% filter(demographic==d_piglet)
+removed_weaned =  removed %>% filter(demographic==d_weaned)
 
-list_prev_weaner_status[[k]] = removed %>% filter(demographic==d_weaned) %>% count(status) %>% pull(status)
-list_prev_weaner_count[[k]] = removed %>% filter(demographic==d_weaned) %>% count(status) %>% pull(n)
+
+# list_prev_piglet_status[[k]] = removed_weaned %>% count(status) %>% pull(status)
+# list_prev_piglet_count[[k]] = removed_weaned %>% count(status) %>% pull(n)
+
+removed_sow = removed %>% filter(demographic==d_sow)
+  # currently not distinguishing dead and culled sows
+# re-sample and calc prev: with replacement 50 pigs, 20 times
+prev_inf_piglet = c()
+prev_inf_sow = c()
+seroprev_sow = c()
+for(i in 1:100)
+{
+  sample_row = sample(1:nrow(removed_weaned),50,replace=T)
+  vec_sample = removed_weaned[sample_row,status]
+  temp_prev_inf = sum(vec_sample==s_I)/50*100
+  prev_inf_piglet = c(prev_inf_piglet,temp_prev_inf)
+  
+  sample_row_sow = sample(1:nrow(removed_sow),50,replace=T)
+  vec_sample_sow = removed_sow[sample_row_sow,status]
+  temp_prev_inf_sow = sum(vec_sample_sow==s_I)/50*100
+  prev_inf_sow = c(prev_inf_sow,temp_prev_inf_sow)
+  
+  temp_sero_prev_inf_sow = sum(vec_sample_sow==s_R)/50*100
+  seroprev_sow = c(seroprev_sow,temp_sero_prev_inf_sow)
+}
+list_piglet_prev[[k]] = prev_inf_piglet
+list_sow_prev[[k]] = prev_inf_sow
+list_sow_seroprev[[k]] = seroprev_sow
+
+list_prev_weaner_status[[k]] =removed_weaned %>% count(status) %>% pull(status)
+list_prev_weaner_count[[k]] = removed_weaned %>% count(status) %>% pull(n)
 
 list_prev_fattening_status[[k]] = removed %>% filter(demographic==d_fattening) %>% count(status) %>% pull(status)
 list_prev_fattening_count[[k]] = removed %>% filter(demographic==d_fattening) %>% count(status) %>% pull(n)
 
-list_prev_sow_status[[k]] = removed %>% filter(demographic==d_sow) %>% count(status) %>% pull(status)
-list_prev_sow_count[[k]] = removed %>% filter(demographic==d_sow) %>% count(status) %>% pull(n)
+list_prev_sow_status[[k]] = removed_sow %>% count(status) %>% pull(status)
+list_prev_sow_count[[k]] = removed_sow %>% count(status) %>% pull(n)
 
 
 # 
 #   group_by(demographic) %>% count(status)
 }
+# }) # profvis
+
+# save(list_persistence_vector, list_persistence_farm,
+#      list_prev_piglet_status,list_prev_piglet_count,
+#      list_prev_weaner_status,list_prev_weaner_count,
+#      list_prev_fattening_status,list_prev_fattening_count,
+#      list_prev_sow_status,list_prev_sow_count,
+#      parameters,
+#      file = "data_25_2Feb2022.RData")
+
+save(list_persistence_vector, list_persistence_farm,
+     list_prev_piglet_status,list_prev_piglet_count,
+     list_prev_weaner_status,list_prev_weaner_count,
+     list_prev_fattening_status,list_prev_fattening_count,
+     list_prev_sow_status,list_prev_sow_count,
+     parameters,list_piglet_prev,list_sow_prev,list_sow_seroprev,
+     file = paste0(File_name,".RData"))
+
+# 
+# med_p = max_p = c()
+# for(i in 1:nrow(parameters))
+# {
+#   med_p = c(med_p,median(list_persistence_vector[[i]]))
+#   max_p = c(max_p,max(list_persistence_vector[[i]]))
+# }
+# summary(lm(max_p ~ parameters[,3]+ parameters[,4]+ parameters[,5]+ parameters[,6]))
