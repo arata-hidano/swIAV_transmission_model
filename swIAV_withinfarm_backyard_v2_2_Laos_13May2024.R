@@ -25,6 +25,22 @@
 #       Adding simulations for non-BSP: start with sow with boar (but not BSP)
 #       Get distributions for 1,5,10,15,20,25,30,35,40 sows with 1 boar
 
+# UPDATE: 15 June 2024
+#       Somehow IAV persists longer in farms with only 1 sow; check why?
+#       I'm suspecting that current_day - day_p_start gives a large value because somehow day_p_start is not updated from 0 which is the initial value
+#       Changed the starting value to NA; now some immune period became NA, meaning that it's not updated
+#       Only 1 sow and it's susceptible 
+#       [Issue 1] When animals were removed, persistence and immune status could change. This was not accounted for. Also the status change from MDA to susceptible was not considered.
+#       [Issue 2] On animal removal, N_TOTAL was always subtracted but for sows N_TOTAL may remain the same if all replacement is introduced from outside. If some internal gilts are used then N_TOTAL decreases
+#       [Issue 3] If clause to compare N_TOTAL and N_IMMUNE appeared after adding some replacement - so the comparison should have been done before changing the number of animals
+#       Now all bugs are fixed
+
+
+# UPDATE: 18 June 2024
+#       Boar got infected always when went for boar service but now based on the probability of 0.03
+
+
+
 #****CHUNK 1
 library(tidyverse)
 library(data.table)
@@ -35,12 +51,20 @@ source("functions_update_transmission.R")
 
 #--------------------------------------------------------------
 # CONDITION TO  CHANGE
-BSP_yes = 0 # if this is boar service provider
+BSP_yes = 1 # if this is boar service provider
+
+# vector_sow = seq(1,8,by=1)
+# vector_sow = seq(2,8,by=1)
 
 vector_sow = seq(1,3,by=1)
-vector_sow = 5*vector_sow
+
+# vector_sow = 5*vector_sow
+vector_sow = 3*vector_sow
+
 vector_sow = c(1,vector_sow)
+# vector_sow = 1
 n_boar_lend_year = 6 # this gives mean 6 range 1-12
+vector_boar = c(1,2)
 
 farm_type = "BR" # Breeding with No boar
 prev_boar = 0.03
@@ -49,12 +73,16 @@ synchro = 1
 
 Today = Sys.Date()
 
+for(num_boar in vector_boar)
+{
+  
+temp_init_boar = num_boar
+
 for(num_sow in vector_sow)
 {
   
 
 temp_init_sow = num_sow
-temp_init_boar = 0
 temp_total = temp_init_sow + temp_init_boar
 
 Scenario_name = paste0("Type",farm_type, "_Ssize",toString(temp_init_sow),"_Bsize",toString(temp_init_boar),
@@ -253,7 +281,7 @@ if(include_backyard==1)
                                 demographic = integer(N_INITIAL_BACKYARD), 
                                 age = numeric(N_INITIAL_BACKYARD), 
                                 sex = integer(N_INITIAL_BACKYARD),
-                                status = integer(N_INITIAL_BACKYARD), 
+                                status = rep(-99,N_INITIAL_BACKYARD), 
                                 next_d_date = integer(N_INITIAL_BACKYARD), 
                                 next_s_date = integer(N_INITIAL_BACKYARD),
                                 farrow_date = integer(N_INITIAL_BACKYARD), 
@@ -291,7 +319,7 @@ if(include_backyard==1)
                                N_EXPOSED = integer(n_backyard), # TOTAL NUMBER OF EXPOSED ANIMALS IN THIS GROUP
                                N_INFECTED = integer(n_backyard), # TOTAL NUMBER OF INFECTED ANIMALS IN THIS GROUP
                                N_IMMUNE = integer(n_backyard),
-                               N_MDA = integer(n_backyard),
+                               N_MDA = integer(n_backyard), # CURRENTLY NOT USING THIS AS MDA ANIMALS ARE COUNTED IN N_IMMUNE
                                day_p_start = integer(n_backyard), # day at which persistence started
                                day_immune_start = integer(n_backyard)
                                
@@ -350,7 +378,9 @@ if(include_backyard==1)
                                            N_EXPOSED = temp_exposed,
                                            N_SUSCEPTIBLE = temp_susceptible,
                                            N_MDA = 0,
-                                           N_TOTAL = temp_total
+                                           N_TOTAL = temp_total,
+                                           day_p_start = NA,
+                                           day_immune_start = NA
                                       )]
     
     # FARM_data_frame[i,]$N_INFECTED = 0
@@ -719,6 +749,21 @@ if(include_backyard==1)
                       ":="(status = s_E,
                            next_s_date = day_latent
                       )]
+    
+    
+    #===========================================================================================
+    # ERROR CHECK
+    ##### ERROR CHECK
+    ## Display how many animals are present and persistence status
+    # temp_persist_farm = FARM_data_frame[current_day - day_p_start > 40,]
+    # if(nrow(temp_persist_farm)>0)
+    # {
+    #   print(paste0("Day is",current_day))
+    #   temp_persist_farm
+    #   readline(prompt="Press [enter] to continue")
+    #   
+    # }
+    
   #======================================================================================================
     # THEN VECTORIZE THE FUNCTION TO REMOVE/UPDATE STATUS ETC, OR AT LEAST VISIT ONLY FARMS THAT ARE RELEVANT
     
@@ -873,6 +918,7 @@ if(include_backyard==1)
     
     #====DEMOGRAPHIC AND DISEASE STATUS CHANGE=======================================
     temp_demographic_data = TEMP_ANIMAL_data_frame1[(next_d_date == 0|next_s_date==0),c("id","farm_id","demographic","status","next_d_date","next_s_date")]
+    temp_demographic_data = temp_demographic_data[farm_id>0,]
     if(NROW(temp_demographic_data)>0)
     {
       temp_id_vec = temp_demographic_data[,id]
@@ -958,7 +1004,9 @@ if(include_backyard==1)
             
             if(BSP_yes == 1)
                     {
-                      if(current_status==s_S)
+              ind_infection = rbinom(1,1,prev_boar) # Determine if boars get infected 
+              
+                      if(current_status==s_S & ind_infection ==1)
                       {
                         next_status = s_E
                         
@@ -1030,6 +1078,8 @@ if(include_backyard==1)
                                  N_IMMUNE = N_IMMUNE + 1
                                  
                             )]
+            temp_num_immune =  FARM_data_frame[temp_farm_id,N_IMMUNE]
+            temp_num_total =  FARM_data_frame[temp_farm_id,N_TOTAL]
             # FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_INFECTED = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_INFECTED -1
             # FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_IMMUNE = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_IMMUNE + 1
             # UPDATE ANIMAL TABLE
@@ -1040,30 +1090,37 @@ if(include_backyard==1)
             # ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$status = next_status
             # ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$next_s_date = next_s_date
             # IF ALL INFECTED ANIMALS ARE GONE, RECORD
-            if(FARM_data_frame[temp_farm_id,N_INFECTED]==0)
+            if(FARM_data_frame[temp_farm_id,N_INFECTED]==0) # This is the start of immune period
             {
               
               diff = current_day - FARM_data_frame[temp_farm_id,day_p_start]
               persistence_vector = c(persistence_vector,diff)
               persistence_farm_id = c(persistence_farm_id,temp_farm_id)
               
-              FARM_data_frame[temp_farm_id,day_immune_start:=current_day] # FARM IMMUNE STATUS STARTS AS SOON AS INFECTION IS GONE
-                  # # IF NO INFECTED ANIMALS PRESENT AND THEN FIRST TIME IMMUNE ANIMALS EMERGE
-                  #   if(FARM_data_frame[temp_farm_id,N_IMMUNE]==0)
-                  #   {
-                  #   
-                  #   }
+              # if(diff>40)
+              # {
+              #   readline(prompt="Press [enter] to continue")
+              #   
+              # }
+                  # if all animals became immune
+                  if(temp_num_total == temp_num_immune)
+                  {
+                    FARM_data_frame[temp_farm_id,day_immune_start:=current_day]
+                  }
+          
             }
         
             
           }
-          else if(current_status==s_R)
+          else if(current_status==s_R|current_status==s_mda)
           {
             next_status = s_S
             temp_next_s_date = 0
             # UPDATE FARM TABLE
+            temp_num_immune =  FARM_data_frame[temp_farm_id, N_IMMUNE]
+            temp_num_total = FARM_data_frame[temp_farm_id, N_TOTAL]
             FARM_data_frame[temp_farm_id,
-                            ":="(N_IMMUNE = N_IMMUNE - 1,
+                            ":="(N_IMMUNE = temp_num_immune - 1,
                                  N_SUSCEPTIBLE = N_SUSCEPTIBLE + 1
                             )]
             # FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_IMMUNE = FARM_data_frame[FARM_data_frame$farm_id==nfarm,]$N_IMMUNE -1
@@ -1077,16 +1134,32 @@ if(include_backyard==1)
             # ANIMAL_data_frame[ANIMAL_data_frame$id==temp_id,]$next_s_date = next_s_date
             
             # MEASURE THE TIME UNTIL NO ANIMALS BECOME IMMUNE
-            if(FARM_data_frame[temp_farm_id,N_IMMUNE]==0)
+            ### @@@ ERROR
+            ### Having 0 immune animals mean that all immune animals became susceptible
+            ### or actually the farm never became immune (not all animals became immune)
+            
+            # if(FARM_data_frame[temp_farm_id,N_IMMUNE]==0) # If no animals are immune anymore, then immune period ends
+            if(temp_num_immune==temp_num_total) # actually this clause should ask if all animals were immune
             {
               
               diff1 = current_day - FARM_data_frame[temp_farm_id,day_immune_start]
+              if(is.na(diff1))
+              {
+                print(paste0("Immune finished because of natural process on farm ",temp_farm_id))
+                readline(prompt="Press [enter] to continue")
+              }
+                    ### @@@ Only 1 sow that is immune became susceptible and farm immune status is broken
+                    ### But this farm didn't become immune maybe because other animals that were present were not immune and then removed
+                    ### When animals are gone, farm can become immune if all remaining animals were immune
+                    ### Similarly when animals are gone, farm can lose persistence if gone animals were only infectious animals (only check if s_I)
+              
               immune_vector = c(immune_vector,diff1)
               immune_farm_id = c(immune_farm_id,temp_farm_id)
               # Add immune day info
-              FARM_data_frame[temp_farm_id,day_immune_start:=current_day]
+              FARM_data_frame[temp_farm_id,day_immune_start:=NA]
             }
           }
+       
         }
       }
       
@@ -1100,6 +1173,7 @@ if(include_backyard==1)
  
     # CREATE removal_date = 0 data
     TEMP_ANIMAL_data_frame1 = na.omit(ANIMAL_data_frame,cols="farm_id")
+    TEMP_ANIMAL_data_frame1 = TEMP_ANIMAL_data_frame1[farm_id>0,]
     TEMP_REMOVAL_id = TEMP_ANIMAL_data_frame1[removal_date==0,.N,by=farm_id][,farm_id]
     # setkey(TEMP_REMOVAL,farm_id)
     # CREATE farrow_date = 0 data
@@ -1138,7 +1212,11 @@ if(include_backyard==1)
         temp_demographic = TEMP_ANIMAL_data_frame1[farm_id == i & removal_date==0,.N,by=demographic]
         n_row = temp_demographic[,sum(N)]
         # FARM_data_frame[nfarm,]$N_TOTAL = FARM_data_frame[nfarm,]$N_TOTAL - NROW(remove_data)
-        FARM_data_frame[i,N_TOTAL := N_TOTAL - n_row]
+        
+        # FARM_data_frame[i,N_TOTAL := N_TOTAL - n_row] 
+        
+            ##### Here ERROR: I already subtracted the number of animals that are gone
+        
         for(n_temp_demographic in 1:NROW(temp_demographic))
         {
           # temp_demo = temp_demographic[n_temp_demographic,] %>% pull(demographic)
@@ -1147,26 +1225,40 @@ if(include_backyard==1)
           temp_num = temp_demographic[n_temp_demographic,N]
           if(temp_demo==d_piglet)
           {
-            FARM_data_frame[i,N_PIGLET := N_PIGLET - temp_num]
+            FARM_data_frame[i, ":=" (N_PIGLET = N_PIGLET - temp_num,
+                                     N_TOTAL = N_TOTAL - temp_num)
+                                     ]
           }
           else if(temp_demo==d_weaned)
           {
-            FARM_data_frame[i,N_WEANED := N_WEANED - temp_num]
+            # FARM_data_frame[i,N_WEANED := N_WEANED - temp_num]
+            FARM_data_frame[i, ":=" (N_WEANED = N_WEANED - temp_num,
+                                     N_TOTAL = N_TOTAL - temp_num)
+            ]
           
           }
           else if(temp_demo==d_fattening)
           {
-            FARM_data_frame[i,N_FATTENING := N_FATTENING - temp_num]
+            # FARM_data_frame[i,N_FATTENING := N_FATTENING - temp_num]
+            FARM_data_frame[i, ":=" (N_FATTENING = N_FATTENING - temp_num,
+                                     N_TOTAL = N_TOTAL - temp_num)
+            ]
             
           }
           else if(temp_demo==d_gilt)
           {
-            FARM_data_frame[i,N_GILT := N_GILT - temp_num]
-            
+            # FARM_data_frame[i,N_GILT := N_GILT - temp_num]
+            FARM_data_frame[i, ":=" (N_GILT = N_GILT - temp_num,
+                                     N_TOTAL = N_TOTAL - temp_num)]
+                            
           }
           else if(temp_demo==d_sow) # @@@ REPLACE BY NEW GILTS
           {
-            FARM_data_frame[i,N_SOW := N_SOW - temp_num]
+            #### FOR sow the number does not change as it's replaced
+            
+            FARM_data_frame[i,N_SOW := N_SOW - temp_num] # Reducing the number of sows but total number remains the same as it's replaced
+            # FARM_data_frame[i, ":=" (N_SOW = N_SOW - temp_num,
+            #                          N_TOTAL = N_TOTAL - temp_num)]
             
             # EXTRACT FARM POLICY
             temp_policy = FARM_data_frame[i,introduce_replace_gilt]
@@ -1191,27 +1283,60 @@ if(include_backyard==1)
                
                 FARM_data_frame[i,":="(
                                           N_WEANED = N_WEANED -temp_num,
-                                          N_GILT = N_GILT + temp_num)]
+                                          N_GILT = N_GILT + temp_num,
+                                          N_TOTAL = N_TOTAL - temp_num # This case the number of sow changes
+                                          )]
+                
                
               }
               # STEP 2: IF temp_num > NROW, TAKE ALL WEANER INTO GILTS. TAKE REMAINING FROM PURCHASE
               else if(NROW(temp_WEANER)<temp_num & NROW(temp_WEANER)>=0)
               {
-                temp_WEANER_id = temp_WEANER$id 
+                temp_WEANER_id = temp_WEANER$id
+                
+                # Already here evaluate if all animals were immune
+                temp_n_total = FARM_data_frame[i,N_TOTAL]
+                temp_immune = FARM_data_frame[i,N_IMMUNE]
+                
+                if(temp_n_total == temp_immune) # If all was immune then immune status breaks
+                {
+                  
+                  diff1 = current_day - FARM_data_frame[i,day_immune_start]
+                  if(is.na(diff1))
+                  {
+                    print(paste0("Immune finished because of replacement oPTION 1 on farm ",i))
+                    readline(prompt="Press [enter] to continue")
+                  }
+                  immune_vector = c(immune_vector,diff1)
+                  immune_farm_id = c(immune_farm_id,i)
+                  # Add immune day info
+                  FARM_data_frame[i,day_immune_start:=NA]
+                  
+                }
+                
+                # IF THERE ARE REMAINING WEANER
                 if(NROW(temp_WEANER)>0)
                 {
                   ANIMAL_data_frame[id %in% temp_WEANER_id,":="(
                                                                 next_d_date = next_d_date + grow_to_first_farrow,
                                                                 demographic = d_gilt)]
                   
-                  FARM_data_frame[i,N_WEANED := N_WEANED -NROW(temp_WEANER)]
+                  FARM_data_frame[i, ":=" (N_WEANED = N_WEANED -NROW(temp_WEANER),
+                                           N_TOTAL = N_TOTAL - NROW(temp_WEANER) # e.g. if 3 sows are gone and 1 is replaced by own gilt, minus 1 as 2 will be external
+                                           )]
+                  
+                  ## case of farm 104
+                  ## 24 animals and 2 sows removed so should be 22 but 1 introduced so 23
+                  # 23 immune and 1 susceptible, 2 immune removed so 22 immune and 1 susceptible, 1 susceptible introduced so 22 immune and 2 suscptible
+                  # wanted to compare 24 total equal to 23 immune (which is NO)
                 }
+                
                 
                 FARM_data_frame[i,N_GILT := N_GILT + temp_num]
                 # REMAINING FROM PURCHASE - introduce temp_num animals
-                temp_num = temp_num - NROW(temp_WEANER)
+                temp_num2 = temp_num - NROW(temp_WEANER)
                 # ADD GILT - WHEN TO ADD? INFECTION STATUS OF GILT (BASED On GLOBAL PREVALENCE FOR NOW)
-                temp_gilt_status = rbinom(temp_num,1,prev_IAV_gilt)
+                temp_gilt_status = rbinom(temp_num2,1,prev_IAV_gilt)
                 temp_s_date = ifelse(temp_gilt_status==1,day_latent,0)
                 temp_n_infected = length(temp_gilt_status[temp_gilt_status==1])
                 
@@ -1227,32 +1352,37 @@ if(include_backyard==1)
                 #                                                    farrow_times = rep(0,temp_num),
                 #                                                    removal_date = rep(-1,temp_num) # ASSUMING INTRODUCED GILT DOESN't DIE UNTIL FARROWING
                 # )
-                ANIMAL_data_frame[id %in% (seq_along(1:temp_num)+current_pig_id),
+                ANIMAL_data_frame[id %in% (seq_along(1:temp_num2)+current_pig_id),
                                                        ":="(
-                                                                   next_d_date = rep(introduction_to_first_farrow,temp_num),
-                                                                   farm_id = rep(i,temp_num),
-                                                                   demographic = rep(d_gilt,temp_num),
-                                                                   sex = rep(female,temp_num), 
+                                                                   next_d_date = rep(introduction_to_first_farrow,temp_num2),
+                                                                   farm_id = rep(i,temp_num2),
+                                                                   demographic = rep(d_gilt,temp_num2),
+                                                                   sex = rep(female,temp_num2), 
                                                                    status = temp_gilt_status,
                                                                    next_s_date = temp_s_date,
-                                                                   farrow_times = rep(0,temp_num),
-                                                                   removal_date = rep(-1,temp_num) # ASSUMING INTRODUCED GILT DOESN't DIE UNTIL FARROWING
+                                                                   farrow_times = rep(0,temp_num2),
+                                                                   removal_date = rep(-1,temp_num2) # ASSUMING INTRODUCED GILT DOESN't DIE UNTIL FARROWING
                 )]
                 
-                if(i==x)
-                {
-                  gilt_x = c(gilt_x,current_day)
-                }
-                current_pig_id = current_pig_id + temp_num
+                # if(i==x)
+                # {
+                #   gilt_x = c(gilt_x,current_day)
+                # }
+                current_pig_id = current_pig_id + temp_num2
                 # UPDATE disease counter
                 FARM_data_frame[i,
                                                   ":="(N_EXPOSED = N_EXPOSED + temp_n_infected,
-                                                       N_SUSCEPTIBLE = N_SUSCEPTIBLE + (temp_num -temp_n_infected),
-                                                       N_TOTAL = N_TOTAL + temp_num
+                                                       N_SUSCEPTIBLE = N_SUSCEPTIBLE + (temp_num2 -temp_n_infected)
+                                                       # N_TOTAL = N_TOTAL + temp_num # total number is not increasing as it's just replacement
                                                   )]
                 # FARM_data_frame[nfarm,]$N_EXPOSED = FARM_data_frame[nfarm,]$N_EXPOSED + temp_n_infected
                 # FARM_data_frame[nfarm,]$N_SUSCEPTIBLE = FARM_data_frame[nfarm,]$N_SUSCEPTIBLE + (temp_num -temp_n_infected)
                 # FARM_data_frame[nfarm,]$N_TOTAL = FARM_data_frame[nfarm,]$N_TOTAL + temp_num
+                
+                # UPDATE persistence and immune status
+                # Introduction does not affect persistence status but does immune status
+              
+              
               }
             } # OPTION 1 END
             else
@@ -1262,7 +1392,29 @@ if(include_backyard==1)
                 gilt_x = c(gilt_x,current_day)
               }
               # OPTION 2: REPLACE BY INTRODUCTION 
+              
+              
+              # Already here evaluate if all animals were immune
+              temp_n_total = FARM_data_frame[i,N_TOTAL]
+              temp_immune = FARM_data_frame[i,N_IMMUNE]
+              
+              if(temp_n_total == temp_immune) # If all was immune then immune status breaks
+              {
+                
+                diff1 = current_day - FARM_data_frame[i,day_immune_start]
+                if(is.na(diff1))
+                {
+                  print(paste0("Immune finished because of replacement oPTION 1 on farm ",i))
+                  readline(prompt="Press [enter] to continue")
+                }
+                immune_vector = c(immune_vector,diff1)
+                immune_farm_id = c(immune_farm_id,i)
+                # Add immune day info
+                FARM_data_frame[i,day_immune_start:=NA]
+                
+              }
               # ADD GILT - WHEN TO ADD? INFECTION STATUS OF GILT (BASED On GLOBAL PREVALENCE FOR NOW)
+              
               temp_gilt_status = rbinom(temp_num,1,prev_IAV_gilt)
               temp_n_infected = length(temp_gilt_status[temp_gilt_status==1])
               
@@ -1294,7 +1446,27 @@ if(include_backyard==1)
               )]
               
               current_pig_id = current_pig_id + temp_num
-              # UPDATE disease counter
+              # UPDATE disease counter and immune status
+              
+              # temp_n_total = FARM_data_frame[i,N_TOTAL]
+              # temp_immune = FARM_data_frame[i,N_IMMUNE]
+              # if(temp_n_total == temp_immune)
+              # {
+              #   
+              #   diff1 = current_day - FARM_data_frame[i,day_immune_start]
+              #   if(is.na(diff1))
+              #   {
+              #     print(paste0("Immune finished because of replacement on farm ",i))
+              #     readline(prompt="Press [enter] to continue")
+              #   }
+              #   immune_vector = c(immune_vector,diff1)
+              #   immune_farm_id = c(immune_farm_id,i)
+              #   # Add immune day info
+              #   FARM_data_frame[i,day_immune_start:=NA]
+              #   
+              # }
+              
+              
               FARM_data_frame[i,
                                                 ":="(N_EXPOSED = N_EXPOSED + temp_n_infected,
                                                      N_SUSCEPTIBLE = N_SUSCEPTIBLE + (temp_num -temp_n_infected),
@@ -1334,21 +1506,42 @@ if(include_backyard==1)
           {
             FARM_data_frame[i,N_INFECTED := N_INFECTED -temp_num]
             
-            # RECORD DURATION OF PERSISTENCE
+            # RECORD DURATION OF PERSISTENCE IF ALL INFECTED ANIMALS ARE GONE
             if(FARM_data_frame[i,N_INFECTED]==0)
             {
               
               diff = current_day - FARM_data_frame[i,day_p_start]
               persistence_vector = c(persistence_vector,diff)
               persistence_farm_id = c(persistence_farm_id,i)
+              FARM_data_frame[i,day_p_start := NA]
             }
           }
           else if(temp_demo==s_R|temp_demo==s_mda)
           {
             FARM_data_frame[i,N_IMMUNE := N_IMMUNE -temp_num]
+            # if(FARM_data_frame[i,N_IMMUNE]==0) # IF THIS IS LAST IMMUNE ANIMAL THEN immune status ends
+            # {
+            #   # (1) Definition of farm immune status is that all animals are immune
+            #   # (2) Some of these farms were never immune because not all animals were immune
+            #   diff1 = current_day - FARM_data_frame[i,day_immune_start]
+            #   if(is.na(diff1))
+            #   {
+            #     print(paste0("Immune finished because of removal on farm ",i))
+            #     readline(prompt="Press [enter] to continue")
+            #     
+            #   }
+            #   immune_vector = c(immune_vector,diff1)
+            #   immune_farm_id = c(immune_farm_id,i)
+            #   FARM_data_frame[i,day_immune_start := NA] # IMMUNE STATUS ENDS
+            # }
            
           }
           
+          # CHECK IF FARMS BECAME IMMUNE BY LOSING ANIMALS
+          if(FARM_data_frame[i,N_TOTAL]==FARM_data_frame[i,N_IMMUNE])
+          {
+            FARM_data_frame[i,day_immune_start := current_day] 
+          }
           
         }
         
@@ -1949,100 +2142,9 @@ if(include_commercial_farm==1)
 #-------------------------------------------------------------------------------------------
 
 # }) # profvis
-# ERROR CHECK
-# COM_ANIMAL_data_frame[unique_room_id==11] %>% NROW(.)
-# COM_FARM_data_frame[unique_room_id==11]
-# 
-# COM_ANIMAL_data_frame[unique_room_id==27] %>% NROW(.)
-# COM_FARM_data_frame[unique_room_id==27]
-# 
-# COM_ANIMAL_data_frame[unique_room_id==32] %>% NROW(.)
-# COM_FARM_data_frame[unique_room_id==32]
-# 
-# summary(COM_persistence[,1])
-# summary(COM_persistence[,2])
-# summary(COM_persistence[,3])
-# COM_persistence[,1]
-# head(FARM_data_frame,20)
-# nrow(FARM_data_frame[FARM_data_frame$N_PIGLET<0,])
-# nrow(FARM_data_frame[FARM_data_frame$N_WEANED<0,])
-# nrow(FARM_data_frame[FARM_data_frame$N_FATTENING<0,])
-# nrow(FARM_data_frame[FARM_data_frame$N_GILT<0,])
-# nrow(FARM_data_frame[FARM_data_frame$N_SOW<0,])
-# nrow(FARM_data_frame[FARM_data_frame$N_TOTAL<0,])
-# nrow(FARM_data_frame[FARM_data_frame$N_SUSCEPTIBLE<0,])
-# nrow(FARM_data_frame[FARM_data_frame$N_EXPOSED<0,])
-# nrow(FARM_data_frame[FARM_data_frame$N_INFECTED<0,])
-# nrow(FARM_data_frame[FARM_data_frame$N_IMMUNE<0,])
-# nrow(FARM_data_frame[FARM_data_frame$N_MDA<0,])
-# FARM_data_frame$day_p_start[!is.na(FARM_data_frame$day_p_start)]
-# summary(persistence_vector)
-# persistence_farm_id[persistence_vector==50]
-# FARM_data_frame[x,]
-# persistence_farm_x
-# immune_farm_x
-# immune_farm_x + persistence_farm_x
-# gilt_x
-# farrow_x
-# this is quite long because of transmission parameter maybe too low
-# persistence_farm_id
-# FARM_data_frame
-# ANIMAL_data_frame[]
-# persistence_vector
-# hist(persistence_vector,breaks = 50)
-# ggplot(persistence_vector)+ geom_histogram()
-# save.image(file="Laos_boar_persistence_30May_500sim.RData")
-# saveRDS(persistence_vector,file="persistence_boar_9sow_500sim.rds")
-# saveRDS(persistence_vector,file="persistence_6sow_1boar_immune_500sim.rds")
-# saveRDS(immune_vector,file="immune_boar_6sow1boar_immune_500sim.rds")
+
 save(persistence_vector,immune_vector,
      file = paste0(File_name,".RData"))
 }
-# hist(persistence_boar_6sow_500sim,breaks = 50)
-# summary(persistence_boar_6sow_500sim) # median 6, range 1-51 mean 11.38
-# summary(persistence_boar_9sow_500sim) # median 8, range 1-53 mean 12.77
-# summary(persistence_boar_3sow_500sim) # median 6, range 1-44 mean 9.48
-# summary(persistence_boar_3sow_1boar_500sim) # median 10, range 1-48 mean 10.64
-# summary(persistence_boar_6sow_1boar_500sim) # median 11, range 1-48 mean 12.91
-# summary(persistence_boar_9sow_1boar_500sim) # median 12, range 1-61 mean 14.76
-# summary(persistence_boar_1sow_1boar_500sim) # median 6, range 1-34 mean 8.04
-# summary(persistence_boar_1sow_2boar_500sim) # median 6, range 1-39 mean 7.65
-# 
-# hist(persistence_boar_1sow_2boar_500sim,breaks = 50)
-# summary(persistence_vector)
-# hist(persistence_vector,breaks = 50)
 
-
-# IMMUNE
-# 1 sow 2 boar
-# summary(immune_boar_1sow_2boar_immune_500sim) # median 177 range 117-236 mean 177
-# hist(immune_boar_1sow_2boar_immune_500sim,breaks = 50)
-
-# 3 sow 2 boar
-# summary(immune_boar_3sow2boar_immune_500sim) # median 180 range 131-264 mean 180.1
-# hist(immune_boar_3sow2boar_immune_500sim,breaks = 50)
-
-# 6 sow 2 boar
-# summary(immune_boar_6sow2boar_immune_500sim) # median 183 range 121-361 mean 182.7
-# hist(immune_boar_6sow2boar_immune_500sim,breaks = 50)
-
-# 9 sow 2 boar
-# summary(immune_boar_9sow2boar_immune_500sim) # median 181.5 range 113-254 mean 181.8
-# hist(immune_boar_9sow2boar_immune_500sim,breaks = 50)
-
-
-# 1 sow 1 boar
-# summary(immune_boar_1sow1boar_immune_500sim) # median 182 range 112-292 mean 183
-# hist(immune_boar_1sow1boar_immune_500sim,breaks = 50)
-
-# 3 sow 1 boar
-# summary(immune_boar_3sow1boar_immune_500sim) # median 185 range 118-268 mean 185.5
-# hist(immune_boar_3sow1boar_immune_500sim,breaks = 50)
-
-# 6 sow 1 boar
-# summary(immune_boar_6sow1boar_immune_500sim) # median 187 range 108-362 mean 186.8
-# hist(immune_boar_6sow1boar_immune_500sim,breaks = 50)
-
-# 9 sow 1 boar
-# summary(immune_boar_9sow1boar_immune_500sim) # median 186 range 120-428 mean 186
-# hist(immune_boar_9sow1boar_immune_500sim,breaks = 50)
+}
